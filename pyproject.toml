@@ -7,7 +7,15 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.13"
+aiogram = "^3.17.0"
+python-dotenv = "^1.0.1"
+pydantic = "^2.10.6"
+pydantic-settings = "^2.7.1"
+aiosqlite = "^0.21.0"
 
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1.0"
 
 [build-system]
 requires = ["poetry-core"]
