@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import async_session_maker
 from app.logger_setup import get_logger
 from app.models import User
+from app.handlers import admin
 
 logger = get_logger(__name__)
 dp = Dispatcher()
@@ -44,20 +45,13 @@ async def command_start_handler(message: Message) -> None:
             )
 
 
-@dp.message()
-async def echo_handler(message: Message) -> None:
-    try:
-        await message.send_copy(chat_id=message.chat.id)
-    except TypeError:
-        await message.answer("Nice try!")
-
-
 async def main() -> None:
     logger.info("Initializing the bot...")
     bot = Bot(
         token=settings.TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    admin.register_admin_handlers(dp)
     logger.info("Starting bot polling...")
     await dp.start_polling(bot)
 
