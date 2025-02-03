@@ -30,9 +30,13 @@ class Settings(BaseSettings):
             return [value]
         return value
 
+    def get_db_url(self) -> str:
+        return f"sqlite+aiosqlite:///{self.SQLITE_DB_PATH}"
+
 
 settings = Settings()
 
 if __name__ == "__main__":
     print(ENV_FILE_PATH)
     print(settings.model_dump())
+    print(settings.get_db_url())
