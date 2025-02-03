@@ -1,5 +1,8 @@
+from html import escape
 from aiogram import types, Dispatcher, html
 from aiogram.filters import Command, CommandObject
+from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
@@ -52,24 +55,67 @@ async def solve_question_handler(
             await message.answer(f"Вопрос с id {question_id} не найден.")
             return
 
-        response = f"Вопрос: {html.bold(question.text)}\n\n"
+        response = f"Вопрос: {escape(question.text)}\n\n"
 
         if question.has_options:
             options = question.options
             if options:
                 for idx, option in enumerate(options, start=1):
                     if option.is_correct:
-                        response += f"{idx}. {html.bold(option.option_text)}\n"
+                        response += f"{idx}. <b>{escape(option.option_text)}</b>\n"
                     else:
-                        response += f"{idx}. {option.option_text}\n"
+                        response += f"{idx}. {escape(option.option_text)}\n"
             else:
                 response += "Варианты ответа не найдены."
         else:
-            response += f"Ответ: {question.answer_text or 'Не указан'}"
+            response += f"Ответ: {escape(question.answer_text or 'Не указан')}"
 
         await message.answer(response, parse_mode="HTML")
+
+
+async def delete_question_handler(
+    message: types.Message, command: CommandObject
+) -> None:
+    if not command.args:
+        await message.answer("Укажите id вопроса. Например: /delete_question 1")
+        return
+
+    try:
+        question_id = int(command.args.split()[0])
+    except ValueError:
+        await message.answer("Id вопроса должен быть числом.")
+        return
+
+    async with async_session_maker() as session:
+        try:
+            query = delete(Question).where(Question.id == question_id)
+            result = await session.execute(query)
+            await session.commit()
+
+            if result.rowcount == 0:  # Если в запросе ничего не удалилось
+                await message.answer(f"Вопрос с id {question_id} не найден.")
+            else:
+                await message.answer(f"Вопрос с id {question_id} успешно удалён.")
+        except IntegrityError as e:
+            await session.rollback()
+            logger.error(f"Ошибка при удалении вопроса: {e}")
+            await message.answer(
+                "Произошла ошибка при удалении вопроса. Попробуйте позже."
+            )
+
+
+async def help_handler(message: types.Message) -> None:
+    response = (
+        "Доступные команды:\n"
+        f"{escape('/list_questions')} — показать список вопросов.\n"
+        f"{escape('/solve_question <id>')} — вопрос и ответ на него.\n"
+        f"{escape('/help')} — показать список всех команд."
+    )
+    await message.answer(response, parse_mode="HTML")
 
 
 def register_quiz_handlers(dp: Dispatcher) -> None:
     dp.message.register(list_questions_handler, Command(commands=["list_questions"]))
     dp.message.register(solve_question_handler, Command(commands=["solve_question"]))
+    dp.message.register(delete_question_handler, Command(commands=["delete_question"]))
+    dp.message.register(help_handler, Command(commands=["help"]))
