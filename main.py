@@ -11,7 +11,7 @@ from app.config import settings
 from app.database import async_session_maker
 from app.logger_setup import get_logger
 from app.models import User
-from app.handlers import admin
+from app.handlers import admin, quiz
 
 logger = get_logger(__name__)
 dp = Dispatcher()
@@ -52,6 +52,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     admin.register_admin_handlers(dp)
+    quiz.register_quiz_handlers(dp)
     logger.info("Starting bot polling...")
     await dp.start_polling(bot)
 
