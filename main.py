@@ -11,7 +11,7 @@ from app.config import settings
 from app.database import async_session_maker
 from app.logger_setup import get_logger
 from app.models import User
-from app.handlers import admin, quiz, quiz_answers
+from app.handlers import admin, quiz, quiz_answers, quiz_test
 
 logger = get_logger(__name__)
 dp = Dispatcher()
@@ -49,6 +49,7 @@ def register_handlers() -> None:
     admin.register_admin_handlers(dp)
     quiz.register_quiz_handlers(dp)
     quiz_answers.register_answer_handlers(dp)
+    quiz_test.register_test_handlers(dp)
 
 
 async def main() -> None:

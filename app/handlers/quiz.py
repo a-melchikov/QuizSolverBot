@@ -110,7 +110,8 @@ async def help_handler(message: types.Message) -> None:
         f"{escape('/list_questions')} — показать список вопросов.\n"
         f"{escape('/solve_question <id>')} — вопрос и ответ на него.\n"
         f"{escape('/help')} — показать список всех команд.\n"
-        f"{escape('/answer_question')} — решить один вопрос."
+        f"{escape('/answer_question')} — решить один вопрос.\n"
+        f"{escape('/start_test')} — решить тест."
     )
     await message.answer(response, parse_mode="HTML")
 
