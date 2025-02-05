@@ -64,6 +64,7 @@ async def process_answer(message: types.Message, state: FSMContext) -> None:
                 text=data["question_text"],
                 has_options=False,
                 answer_text=answer_text,
+                created_by=message.from_user.id,
             )
             session.add(question)
             await session.commit()
@@ -119,6 +120,7 @@ async def process_correct_options(message: types.Message, state: FSMContext) -> 
             text=data["question_text"],
             has_options=True,
             answer_text=data.get("answer_text"),
+            created_by=message.from_user.id,
         )
         session.add(question)
         await session.flush()

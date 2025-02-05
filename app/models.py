@@ -11,6 +11,7 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(50))
     last_name: Mapped[str | None] = mapped_column(String(50))
 
+    questions = relationship("Question", back_populates="user")
     test_attempts = relationship(
         "TestAttempt", back_populates="user", cascade="all, delete-orphan"
     )
@@ -21,6 +22,13 @@ class Question(Base):
     has_options: Mapped[bool] = mapped_column(Boolean, default=False)
     answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+
+    created_by_user = relationship("User", back_populates="questions")
+
+    user = relationship("User", back_populates="questions")
     options = relationship(
         "Option",
         back_populates="question",
@@ -50,6 +58,7 @@ class TestAttempt(Base):
     start_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_questions: Mapped[int] = mapped_column(Integer, nullable=False)
 
     user = relationship("User", back_populates="test_attempts")
     answers = relationship(
@@ -64,8 +73,6 @@ class AttemptAnswer(Base):
     question_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("questions.id"), nullable=False
     )
-    given_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
-    given_option_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     test_attempt = relationship("TestAttempt", back_populates="answers")

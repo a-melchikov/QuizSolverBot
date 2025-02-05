@@ -37,7 +37,6 @@ async def start_test(message: Message, state: FSMContext):
     await state.set_state(TestStates.waiting_for_questions_count)
 
 
-
 async def process_questions_count(message: Message, state: FSMContext):
     if message.text == "Завершить тест":
         await finish_test(message, state)
@@ -54,7 +53,7 @@ async def process_questions_count(message: Message, state: FSMContext):
         )
         questions = questions.scalars().all()
 
-        test_attempt = TestAttempt(user_id=message.from_user.id)
+        test_attempt = TestAttempt(user_id=message.from_user.id, total_questions=len(questions))
         session.add(test_attempt)
         await session.commit()
 
@@ -145,9 +144,8 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
 
         await session.commit()
 
-    # Отправляем результат ответа пользователю
     user_id = poll_answer.user.id
-    # Результат правильного ответа
+
     if is_correct:
         await bot.send_message(
             user_id,
@@ -162,19 +160,13 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
             parse_mode="HTML",
         )
 
-    # Переход к следующему вопросу
     data["current_question"] += 1
     await state.update_data(data)
 
-    # Следующий вопрос
     next_question_message = await bot.send_message(
         user_id, "🔄 Переходим к следующему вопросу..."
     )
     await show_next_question(next_question_message, state)
-
-
-
-
 
 
 async def process_text_answer(message: Message, state: FSMContext):
@@ -234,15 +226,15 @@ async def finish_test(message: Message, state: FSMContext):
         percentage = (correct_answers / total_answers * 100) if total_answers > 0 else 0
 
         result_message = (
-            f"Тест завершен!\n"
-            f"Время выполнения: {duration.seconds // 60} мин {duration.seconds % 60} сек\n"
-            f"Правильных ответов: {correct_answers} из {total_answers}\n"
-            f"Процент правильных ответов: {percentage:.1f}%"
+            f"🏁 <b>Тест завершен!</b>\n\n"
+            f"⏳ <b>Время выполнения:</b> <i>{duration.seconds // 60} мин {duration.seconds % 60} сек</i>\n"
+            f"✅ <b>Правильных ответов:</b> <i>{correct_answers} из {total_answers}</i>\n"
+            f"📊 <b>Процент правильных ответов:</b> <i>{percentage:.1f}%</i>\n\n"
+            "Начать новый тест - /start_test."
         )
 
         await message.answer(result_message, reply_markup=ReplyKeyboardRemove())
         await state.clear()
-
 
 
 def register_test_handlers(dp: Dispatcher):
