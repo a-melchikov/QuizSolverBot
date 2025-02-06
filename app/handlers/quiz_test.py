@@ -53,7 +53,9 @@ async def process_questions_count(message: Message, state: FSMContext):
         )
         questions = questions.scalars().all()
 
-        test_attempt = TestAttempt(user_id=message.from_user.id, total_questions=len(questions))
+        test_attempt = TestAttempt(
+            user_id=message.from_user.id, total_questions=len(questions)
+        )
         session.add(test_attempt)
         await session.commit()
 
@@ -116,7 +118,7 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
     if poll_answer.poll_id != data.get("current_poll_id"):
         return
 
-    selected_options = poll_answer.option_ids  # Индексы выбранных вариантов
+    selected_options = poll_answer.option_ids
 
     async with async_session_maker() as session:
         question_id = data["questions"][data["current_question"]]
@@ -240,5 +242,5 @@ async def finish_test(message: Message, state: FSMContext):
 def register_test_handlers(dp: Dispatcher):
     dp.message.register(start_test, Command("start_test"))
     dp.message.register(process_questions_count, TestStates.waiting_for_questions_count)
-    dp.poll_answer.register(process_poll_answer)  # Обработчик ответов на голосование
     dp.message.register(process_text_answer, TestStates.answering_questions)
+    dp.poll_answer.register(process_poll_answer, TestStates.answering_questions)

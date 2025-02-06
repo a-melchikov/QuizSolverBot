@@ -109,4 +109,4 @@ def register_answer_handlers(dp: Dispatcher):
     dp.message.register(start_question, Command("start_question"))
     dp.message.register(process_question_id, AnswerState.waiting_for_question_id)
     dp.message.register(process_text_answer, AnswerState.answering)
-    dp.poll_answer.register(process_poll_answer)
+    dp.poll_answer.register(process_poll_answer, AnswerState.answering)

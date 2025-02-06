@@ -6,7 +6,10 @@ from app.models import TestAttempt
 
 
 async def view_test_history(message: types.Message):
-    user_id = message.from_user.id
+    if hasattr(message, "via_bot"):
+        user_id = message.chat.id
+    else:
+        user_id = message.from_user.id
 
     async with async_session_maker() as session:
         test_attempts = await session.execute(
