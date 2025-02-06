@@ -21,7 +21,7 @@ async def view_test_history(message: types.Message):
         return
 
     history_message = "📜 <b>История ваших тестов:</b>\n"
-    for i, attempt in enumerate(reversed(test_attempts[:10]), start=1):
+    for i, attempt in enumerate(reversed(test_attempts), start=1):
         end_time_str = (
             attempt.end_time.strftime("%d.%m.%Y %H:%M")
             if attempt.end_time

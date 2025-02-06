@@ -1,207 +1,112 @@
-from aiogram import types, Dispatcher
-from aiogram.filters import StateFilter, Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import Dispatcher, Bot
+from aiogram.types import Message, PollAnswer
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
-
+from sqlalchemy import select
 from app.database import async_session_maker
-from app.models import Question
+from app.models import Question, Option
 
 
-class AnswerQuestionStates(StatesGroup):
+class AnswerState(StatesGroup):
     waiting_for_question_id = State()
-    waiting_for_answer = State()
+    answering = State()
 
 
-async def answer_question_start(message: types.Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer("Введите ID вопроса, который нужно решить:")
-    await state.set_state(AnswerQuestionStates.waiting_for_question_id)
+async def start_question(message: Message, state: FSMContext):
+    await message.answer("Введите ID вопроса, чтобы начать.")
+    await state.set_state(AnswerState.waiting_for_question_id)
 
 
-async def process_question_id(message: types.Message, state: FSMContext) -> None:
-    try:
-        question_id = int(message.text.strip())
-    except ValueError:
-        await message.answer("ID должен быть числом. Попробуйте снова:")
+async def process_question_id(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Пожалуйста, введите число!")
+        return
+
+    question_id = int(message.text)
+
+    await answer_question(message, state, question_id)
+
+
+async def answer_question(message: Message, state: FSMContext, question_id: int):
+    async with async_session_maker() as session:
+        question = await session.get(Question, question_id)
+        if not question:
+            await message.answer("Вопрос с указанным ID не найден.")
+            return
+
+        await state.update_data(question_id=question_id)
+
+        if question.has_options:
+            options = await session.execute(
+                select(Option).where(Option.question_id == question.id)
+            )
+            options = options.scalars().all()
+
+            option_texts = [opt.option_text for opt in options]
+            poll = await message.answer_poll(
+                question=question.text,
+                options=option_texts,
+                type="regular",
+                allows_multiple_answers=True,
+                is_anonymous=False,
+            )
+            await state.update_data(current_poll_id=poll.poll.id)
+        else:
+            await message.answer(question.text)
+
+        await state.set_state(AnswerState.answering)
+
+
+async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+
+    if poll_answer.poll_id != data.get("current_poll_id"):
         return
 
     async with async_session_maker() as session:
-        query = (
-            select(Question)
-            .options(selectinload(Question.options))
-            .where(Question.id == question_id)
+        question = await session.get(Question, data["question_id"])
+        options = await session.execute(
+            select(Option).where(Option.question_id == question.id)
         )
-        result = await session.execute(query)
-        question = result.scalar()
+        options = options.scalars().all()
 
-    if not question:
-        await message.answer(f"Вопрос с ID {question_id} не найден. Попробуйте снова:")
-        return
-
-    await state.update_data(question_id=question_id, selected_answers=[])
-
-    if question.has_options:
-        keyboard_buttons = [
-            [
-                InlineKeyboardButton(
-                    text=f"{option.option_text}",
-                    callback_data=f"toggle:{question_id}:{option.id}",
-                )
-            ]
-            for option in question.options
+        option_mapping = {index: option.id for index, option in enumerate(options)}
+        selected_option_ids = [
+            option_mapping[index] for index in poll_answer.option_ids
         ]
 
-        keyboard_buttons.append(
-            [InlineKeyboardButton(text="Готово", callback_data=f"submit:{question_id}")]
+        correct_options = [option for option in options if option.is_correct]
+        correct_option_ids = [option.id for option in correct_options]
+        is_correct = set(selected_option_ids) == set(correct_option_ids)
+
+        result_message = (
+            "✅ Верно!"
+            if is_correct
+            else f"❌ Неверно!\nПравильный ответ:\n{chr(10).join(opt.option_text for opt in correct_options)}"
         )
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-
-        await message.answer(
-            f"Вопрос: {question.text}\n\nВыберите правильные варианты:",
-            reply_markup=keyboard,
-        )
-    else:
-        await message.answer(f"Вопрос: {question.text}\n\nВведите ваш ответ текстом:")
-        await state.set_state(AnswerQuestionStates.waiting_for_answer)
-
-
-async def process_answer_callback(
-    callback_query: types.CallbackQuery, state: FSMContext
-) -> None:
-    callback_data = callback_query.data
-
-    parts = callback_data.split(":")
-    if len(parts) < 2 or len(parts) > 3:
-        await callback_query.message.answer("Ошибка: неверный формат данных.")
-        await callback_query.answer()
-        return
-
-    action = parts[0]
-    question_id_str = parts[1]
-    option_id = None if len(parts) == 2 else parts[2]
-
-    async with async_session_maker() as session:
-        data = await state.get_data()
-        question_id = data.get("question_id")
-        selected_answers = data.get("selected_answers", [])
-
-        try:
-            question_id = int(question_id_str)
-            option_id = int(option_id) if option_id else None
-        except ValueError:
-            await callback_query.message.answer("Ошибка: данные неверного формата.")
-            await callback_query.answer()
-            return
-
-        question_query = (
-            select(Question)
-            .options(selectinload(Question.options))
-            .where(Question.id == question_id)
-        )
-        result = await session.execute(question_query)
-        question = result.scalar()
-
-        if not question:
-            await callback_query.message.answer("Ошибка: вопрос не найден.")
-            await state.clear()
-            return
-
-        if action == "toggle":
-            if option_id is None:
-                await callback_query.message.answer("Ошибка: неверный формат данных.")
-                await callback_query.answer()
-                return
-
-            if option_id in selected_answers:
-                selected_answers.remove(option_id)
-            else:
-                selected_answers.append(option_id)
-
-            # Сохраняем новое состояние выбора
-            await state.update_data(selected_answers=selected_answers)
-
-            keyboard_buttons = [
-                [
-                    InlineKeyboardButton(
-                        text=f"{'✅' if option.id in selected_answers else ''} {option.option_text}",
-                        callback_data=f"toggle:{question.id}:{option.id}",
-                    )
-                ]
-                for option in question.options
-            ]
-
-            keyboard_buttons.append(
-                [
-                    InlineKeyboardButton(
-                        text="Готово", callback_data=f"submit:{question_id}"
-                    )
-                ]
-            )
-
-            keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-            await callback_query.message.edit_reply_markup(reply_markup=keyboard)
-
-        elif action == "submit":
-            correct_answers = {
-                option.id for option in question.options if option.is_correct
-            }
-            selected_answers_set = set(selected_answers)
-
-            if selected_answers_set == correct_answers:
-                await callback_query.message.answer("Верный ответ! 🎉")
-            else:
-                correct_options = [
-                    opt.option_text for opt in question.options if opt.is_correct
-                ]
-                correct_text = ", ".join(correct_options)
-                await callback_query.message.answer(
-                    f"Неверно. Правильные варианты: {correct_text}"
-                )
-
-            await state.clear()
-
-        await callback_query.answer()
-
-
-async def process_textual_answer(message: types.Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    question_id = data["question_id"]
-
-    async with async_session_maker() as session:
-        query = select(Question).where(Question.id == question_id)
-        result = await session.execute(query)
-        question = result.scalar()
-
-    if not question:
-        await message.answer("Ошибка: вопрос не найден.")
+        await bot.send_message(poll_answer.user.id, result_message, parse_mode="HTML")
         await state.clear()
-        return
 
-    user_answer = message.text.strip()
 
-    if user_answer.lower() == (question.answer_text or "").lower():
-        await message.answer("Верный ответ! 🎉")
-    else:
-        await message.answer(
-            f"Неверно. Правильный ответ: {question.answer_text or 'Не указан'}"
+async def process_text_answer(message: Message, state: FSMContext):
+    data = await state.get_data()
+
+    async with async_session_maker() as session:
+        question = await session.get(Question, data["question_id"])
+        is_correct = message.text.lower() == question.answer_text.lower()
+
+        result_message = (
+            "✅ Верно!"
+            if is_correct
+            else f"❌ Неверно!\nПравильный ответ: {question.answer_text}"
         )
+        await message.answer(result_message, parse_mode="HTML")
+        await state.clear()
 
-    await state.clear()
 
-
-def register_answer_handlers(dp: Dispatcher) -> None:
-    dp.message.register(answer_question_start, Command(commands=["answer_question"]))
-    dp.message.register(
-        process_question_id, StateFilter(AnswerQuestionStates.waiting_for_question_id)
-    )
-    dp.message.register(
-        process_textual_answer, StateFilter(AnswerQuestionStates.waiting_for_answer)
-    )
-    dp.callback_query.register(
-        process_answer_callback,
-        lambda c: c.data.startswith("toggle:") or c.data.startswith("submit:"),
-    )
+def register_answer_handlers(dp: Dispatcher):
+    dp.message.register(start_question, Command("start_question"))
+    dp.message.register(process_question_id, AnswerState.waiting_for_question_id)
+    dp.message.register(process_text_answer, AnswerState.answering)
+    dp.poll_answer.register(process_poll_answer)
