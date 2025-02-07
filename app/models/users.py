@@ -14,3 +14,12 @@ class User(Base):
     test_attempts = relationship(
         "TestAttempt", back_populates="user", cascade="all, delete-orphan"
     )
+
+    def __str__(self):
+        return (
+            f"{self.__class__.__name__}(id={self.telegram_id}, username={self.username}, "
+            f"first_name={self.first_name}, last_name={self.last_name})"
+        )
+
+    def __repr__(self):
+        return str(self)
