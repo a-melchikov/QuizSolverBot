@@ -1,7 +1,5 @@
 import asyncio
 
-from sqlalchemy import select, delete
-
 from app.database import async_session_maker
 from app.models import Question, Option
 from app.schemas.options import OptionCreate
@@ -32,20 +30,6 @@ class QuestionRepository:
 
             await session.commit()
             return question
-
-    async def get_questions(self) -> list[Question]:
-        async with async_session_maker() as session:
-            query = select(Question)
-            result = await session.execute(query)
-            questions = result.scalars().all()
-            return questions
-
-    async def delete_question(self, question_id: int) -> bool:
-        async with async_session_maker() as session:
-            query = delete(Question).where(Question.id == question_id)
-            result = await session.execute(query)
-            await session.commit()
-            return result.rowcount > 0
 
 
 async def main():
