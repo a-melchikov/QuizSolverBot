@@ -20,13 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Шаг 1: Создаём новую таблицу с нужной структурой для `attemptanswers`
+    # Шаг 1: Создаём новую таблицу с нужной структурой для attemptanswers
     op.create_table(
         "new_attemptanswers",
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("question_id", sa.Integer, nullable=False),
         sa.Column("test_attempt_id", sa.Integer, nullable=False),
-        # Удалённые столбцы "given_answer" и "given_option_id" отсутствуют
+        # Убраны лишние столбцы "given_answer" и "given_option_id"
     )
 
     # Шаг 2: Копируем данные из старой таблицы в новую таблицу
@@ -41,29 +41,27 @@ def upgrade() -> None:
     # Шаг 3: Удаляем старую таблицу
     op.drop_table("attemptanswers")
 
-    # Шаг 4: Даем новой таблице прежнее имя
+    # Шаг 4: Переименовываем новую таблицу в старое название
     op.rename_table("new_attemptanswers", "attemptanswers")
 
     # Шаг 5: Добавляем поле `total_questions` в таблицу `testattempts`
-    # SQLite требует значение по умолчанию для NOT NULL
+    # SQLite требует default-значение для NOT NULL
     op.add_column(
         "testattempts",
         sa.Column("total_questions", sa.Integer(), nullable=False, server_default="0"),
     )
 
-    # Шаг 6: Убираем `server_default`, если для других СУБД он не нужен
-    op.alter_column(
-        "testattempts",
-        "total_questions",
-        server_default=None,
-    )
+    # ПРИМЕЧАНИЕ:
+    # В SQLite нельзя удалить server_default, оставляем его как есть.
 
 
 def downgrade() -> None:
-    # Шаг 1: Удаляем поле `total_questions` из таблицы `testattempts`
-    op.drop_column("testattempts", "total_questions")
+    # Шаг 1: Удаляем столбец total_questions из таблицы testattempts
+    # В SQLite нужно пересоздать всю таблицу для удаления столбца
+    with op.batch_alter_table("testattempts") as batch_op:
+        batch_op.drop_column("total_questions")
 
-    # Шаг 2: Создаём новую таблицу с восстановленными полями
+    # Шаг 2: Создаем новую таблицу для восстановления структуры attemptanswers
     op.create_table(
         "old_attemptanswers",
         sa.Column("id", sa.Integer, primary_key=True),
@@ -75,7 +73,7 @@ def downgrade() -> None:
         ),  # Восстанавливаем столбец
     )
 
-    # Шаг 3: Восстанавливаем данные с добавлением значения NULL для удалённых столбцов
+    # Шаг 3: Копируем данные обратно, добавляя NULL для удалённых столбцов
     op.execute(
         """
         INSERT INTO old_attemptanswers (id, question_id, test_attempt_id, given_answer, given_option_id)
@@ -84,8 +82,8 @@ def downgrade() -> None:
         """
     )
 
-    # Шаг 4: Удаляем текущую таблицу
+    # Шаг 4: Удаляем текущую таблицу attemptanswers
     op.drop_table("attemptanswers")
 
-    # Шаг 5: Переименовываем новую таблицу в старое имя
+    # Шаг 5: Переименовываем таблицу old_attemptanswers обратно
     op.rename_table("old_attemptanswers", "attemptanswers")
