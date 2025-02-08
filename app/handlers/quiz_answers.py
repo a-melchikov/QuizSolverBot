@@ -94,12 +94,17 @@ async def process_text_answer(message: Message, state: FSMContext):
 
     async with async_session_maker() as session:
         question = await session.get(Question, data["question_id"])
-        is_correct = message.text.lower() == question.answer_text.lower()
+        result = await session.execute(
+            select(Option).where(Option.question_id == question.id)
+        )
+
+        answer = result.scalar_one_or_none()
+        is_correct = message.text.lower() == answer.option_text.lower()
 
         result_message = (
             "✅ Верно!"
             if is_correct
-            else f"❌ Неверно!\nПравильный ответ: {question.answer_text}"
+            else f"❌ Неверно!\nПравильный ответ: {answer.option_text}"
         )
         await message.answer(result_message, parse_mode="HTML")
         await state.clear()

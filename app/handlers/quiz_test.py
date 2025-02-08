@@ -127,7 +127,6 @@ async def show_next_question(message: Message, state: FSMContext):
                 await message.answer(f"{current_question + 1}. {question.text}")
 
 
-
 async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: Bot):
     data = await state.get_data()
 
@@ -196,8 +195,12 @@ async def process_text_answer(message: Message, state: FSMContext):
     async with async_session_maker() as session:
         question_id = data["questions"][data["current_question"]]
         question = await session.get(Question, question_id)
+        result = await session.execute(
+            select(Option).where(Option.question_id == question.id)
+        )
 
-        is_correct = message.text.lower() == question.answer_text.lower()
+        answer_ = result.scalar_one_or_none()
+        is_correct = message.text.lower() == answer_.option_text.lower()
 
         answer = AttemptAnswer(
             test_attempt_id=data["test_attempt_id"],
@@ -212,7 +215,7 @@ async def process_text_answer(message: Message, state: FSMContext):
     else:
         await message.answer(
             f"❌ <b>Неверно!</b>\n\n"
-            f"<b>Правильный ответ:</b> {question.answer_text}",
+            f"<b>Правильный ответ:</b> {answer_.option_text}\n",
             parse_mode="HTML",
         )
 
