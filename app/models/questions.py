@@ -13,9 +13,9 @@ class Question(Base):
         ForeignKey("users.id"), nullable=True
     )
 
-    created_by_user = relationship("User", back_populates="questions")
+    created_by_user = relationship("User", back_populates="questions", overlaps="user")
+    user = relationship("User", back_populates="questions", overlaps="created_by_user")
 
-    user = relationship("User", back_populates="questions")
     options = relationship(
         "Option",
         back_populates="question",

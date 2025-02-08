@@ -1,6 +1,6 @@
 from aiogram import Dispatcher
 from app.handlers import (
-    admin,
+    add_question,
     quiz_answers,
     quiz_test,
     quiz_history,
@@ -13,7 +13,7 @@ from app.handlers import (
 
 def register_all_handlers(dp: Dispatcher) -> None:
     start.register_start_handler(dp)
-    admin.register_admin_handlers(dp)
+    add_question.register_admin_handlers(dp)
     quiz.register_quiz_handlers(dp)
     quiz_answers.register_answer_handlers(dp)
     quiz_test.register_test_handlers(dp)

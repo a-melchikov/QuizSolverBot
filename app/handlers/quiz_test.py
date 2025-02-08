@@ -97,10 +97,20 @@ async def show_next_question(message: Message, state: FSMContext):
                 await show_next_question(message, state)
                 return
 
-            option_texts = [opt.option_text for opt in options]
+            # Обрезаем длинные варианты ответов
+            option_texts = []
+            for opt in options:
+                text = opt.option_text
+                if len(text) > 97:  # Оставляем место для "..."
+                    text = text[:97] + "..."
+                option_texts.append(text)
+
+            question_text = question.text
+            if len(question_text) > 300:
+                question_text = question_text[:297] + "..."
 
             poll = await message.answer_poll(
-                question=f"{current_question + 1}. {question.text}",
+                question=f"{current_question + 1}. {question_text}",
                 options=option_texts,
                 type="regular",
                 allows_multiple_answers=True,
@@ -109,7 +119,13 @@ async def show_next_question(message: Message, state: FSMContext):
 
             await state.update_data(current_poll_id=poll.poll.id)
         else:
-            await message.answer(f"Вопрос {current_question + 1}: {question.text}")
+            if len(question.text) > 300:
+                await message.answer(
+                    f"Ошибка: Вопрос {current_question + 1} превышает ограничение в 300 символов."
+                )
+            else:
+                await message.answer(f"{current_question + 1}. {question.text}")
+
 
 
 async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: Bot):
@@ -181,14 +197,24 @@ async def process_text_answer(message: Message, state: FSMContext):
         question_id = data["questions"][data["current_question"]]
         question = await session.get(Question, question_id)
 
+        is_correct = message.text.lower() == question.answer_text.lower()
+
         answer = AttemptAnswer(
             test_attempt_id=data["test_attempt_id"],
             question_id=question_id,
-            given_answer=message.text,
-            is_correct=message.text.lower() == question.answer_text.lower(),
+            is_correct=is_correct,
         )
         session.add(answer)
         await session.commit()
+
+    if is_correct:
+        await message.answer("✅ <b>Верно!</b>", parse_mode="HTML")
+    else:
+        await message.answer(
+            f"❌ <b>Неверно!</b>\n\n"
+            f"<b>Правильный ответ:</b> {question.answer_text}",
+            parse_mode="HTML",
+        )
 
     data["current_question"] += 1
     await state.update_data(data)
