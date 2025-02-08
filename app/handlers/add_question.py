@@ -5,6 +5,9 @@ from aiogram.fsm.state import State, StatesGroup
 from app.database import async_session_maker
 from app.models import Question, Option
 from app.logger_setup import get_logger
+from app.repositories.questions import QuestionRepository
+from app.schemas.options import OptionCreate
+from app.schemas.questions import QuestionCreate
 
 logger = get_logger(__name__)
 
@@ -57,17 +60,15 @@ async def process_answer(message: types.Message, state: FSMContext) -> None:
         return
     await state.update_data(answer_text=answer_text)
     data = await state.get_data()
-
+    question_repository = QuestionRepository()
     if not data.get("has_options"):
-        async with async_session_maker() as session:
-            question = Question(
-                text=data["question_text"],
-                has_options=False,
-                answer_text=answer_text,
-                created_by=message.from_user.id,
-            )
-            session.add(question)
-            await session.commit()
+        question_schema = QuestionCreate(
+            text=data["question_text"],
+            has_options=False,
+            answer_text=answer_text,
+            created_by=message.from_user.id,
+        )
+        await question_repository.create_question(question_schema)
         await message.answer("Вопрос успешно добавлен!")
         await state.clear()
     else:
@@ -115,29 +116,25 @@ async def process_correct_options(message: types.Message, state: FSMContext) -> 
         )
         return
 
-    async with async_session_maker() as session:
-        question = Question(
-            text=data["question_text"],
-            has_options=True,
-            answer_text=data.get("answer_text"),
-            created_by=message.from_user.id,
-        )
-        session.add(question)
-        await session.flush()
+    question_schema = QuestionCreate(
+        text=data["question_text"],
+        has_options=True,
+        answer_text=data.get("answer_text"),
+        created_by=message.from_user.id,
+    )
 
-        for idx, option_text in enumerate(options):
-            option = Option(
-                question_id=question.id,
-                option_text=option_text,
-                is_correct=(idx in correct_indices),
-            )
-            session.add(option)
+    option_schemes = [
+        OptionCreate(option_text=option_text, is_correct=(idx in correct_indices))
+        for idx, option_text in enumerate(options)
+    ]
 
-        await session.commit()
+    question_repository = QuestionRepository()
+    await question_repository.create_question_with_options(
+        question_schema, option_schemes
+    )
 
     await message.answer("Вопрос успешно добавлен!")
     await state.clear()
-
 
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(add_question_start, Command(commands=["add_question"]))
