@@ -26,6 +26,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("question_id", sa.Integer, nullable=False),
         sa.Column("test_attempt_id", sa.Integer, nullable=False),
+        sa.Column("is_correct", sa.Boolean, nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
         # Убраны лишние столбцы "given_answer" и "given_option_id"
     )
 
