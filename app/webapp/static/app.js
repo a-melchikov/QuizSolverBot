@@ -36,9 +36,63 @@
     return res.json();
   }
 
-  // State
+  // ---------------- Theme Management ----------------
+  const THEME_KEY = "quiz_solver_theme";
+  function initTheme() {
+    let savedTheme = localStorage.getItem(THEME_KEY);
+    if (!savedTheme) {
+      if (tg?.colorScheme) {
+        savedTheme = tg.colorScheme;
+      } else {
+        savedTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+    }
+    applyTheme(savedTheme);
+
+    const toggleBtn = document.getElementById("theme-toggle-btn");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        triggerHaptic("light");
+        const isDark = document.body.classList.contains("theme-dark");
+        applyTheme(isDark ? "light" : "dark");
+      });
+    }
+  }
+
+  function applyTheme(theme) {
+    localStorage.setItem(THEME_KEY, theme);
+    const sunIcon = document.getElementById("theme-icon-sun");
+    const moonIcon = document.getElementById("theme-icon-moon");
+
+    if (theme === "dark") {
+      document.body.classList.add("theme-dark");
+      document.body.classList.remove("theme-light");
+      if (sunIcon) sunIcon.style.display = "block";
+      if (moonIcon) moonIcon.style.display = "none";
+      try {
+        if (tg) {
+          tg.setHeaderColor?.("#1e293b");
+          tg.setBackgroundColor?.("#0f172a");
+        }
+      } catch (_) {}
+    } else {
+      document.body.classList.add("theme-light");
+      document.body.classList.remove("theme-dark");
+      if (sunIcon) sunIcon.style.display = "none";
+      if (moonIcon) moonIcon.style.display = "block";
+      try {
+        if (tg) {
+          tg.setHeaderColor?.("#ffffff");
+          tg.setBackgroundColor?.("#f8fafc");
+        }
+      } catch (_) {}
+    }
+  }
+
+  // ---------------- State ----------------
   let currentTab = "quiz";
   let userProfile = null;
+  let totalAvailableQuestions = 238;
 
   // Quiz State
   let quizMode = "training"; // "training" or "exam"
@@ -70,10 +124,15 @@
 
   // Init
   async function init() {
+    initTheme();
     setupNavigation();
     setupQuizListeners();
     setupCatalogListeners();
+    setupModalListeners();
+    await loadInitialData();
+  }
 
+  async function loadInitialData() {
     try {
       userProfile = await apiFetch("/api/me");
       userBadge.textContent = userProfile.first_name || userProfile.username || "Пользователь";
@@ -81,6 +140,22 @@
       console.warn("Could not load user info:", e);
       userBadge.textContent = "Гость";
     }
+
+    try {
+      const qResp = await apiFetch("/api/questions?limit=1");
+      if (qResp && qResp.total) {
+        totalAvailableQuestions = qResp.total;
+        const allChip = document.getElementById("chip-all-count");
+        if (allChip) allChip.textContent = `Все (${totalAvailableQuestions})`;
+        const hint = document.getElementById("custom-count-hint");
+        if (hint) hint.textContent = `Доступно вопросов в базе: ${totalAvailableQuestions}`;
+        const input = document.getElementById("custom-count-input");
+        if (input) {
+          input.max = totalAvailableQuestions;
+          input.placeholder = `1–${totalAvailableQuestions}`;
+        }
+      }
+    } catch (_) {}
   }
 
   // ---------------- Navigation ----------------
@@ -114,14 +189,38 @@
   function setupQuizListeners() {
     // Count chips
     const chips = document.querySelectorAll("#count-selector .chip");
+    const customInput = document.getElementById("custom-count-input");
+
     chips.forEach((c) => {
       c.addEventListener("click", () => {
         chips.forEach((item) => item.classList.remove("active"));
         c.classList.add("active");
-        quizCount = parseInt(c.dataset.count);
+        if (customInput) customInput.value = "";
+
+        if (c.dataset.count === "all") {
+          quizCount = totalAvailableQuestions;
+        } else {
+          quizCount = parseInt(c.dataset.count) || 10;
+        }
         triggerHaptic("selection");
       });
     });
+
+    if (customInput) {
+      customInput.addEventListener("input", () => {
+        let val = parseInt(customInput.value);
+        if (isNaN(val) || val <= 0) {
+          quizCount = 10;
+          return;
+        }
+        if (val > totalAvailableQuestions) {
+          val = totalAvailableQuestions;
+          customInput.value = val;
+        }
+        quizCount = val;
+        chips.forEach((item) => item.classList.remove("active"));
+      });
+    }
 
     // Mode selector
     const modeTraining = document.getElementById("mode-training");
@@ -162,11 +261,16 @@
     try {
       const resp = await apiFetch("/api/quiz/start", {
         method: "POST",
-        body: JSON.stringify({ count: quizCount, mode: quizMode }),
+        body: JSON.stringify({
+          count: quizCount,
+          mode: quizMode,
+        }),
       });
 
       if (!resp.questions || resp.questions.length === 0) {
-        alert("В базе данных нет доступных вопросов!");
+        alert("Нет доступных вопросов в базе!");
+        btn.disabled = false;
+        btn.textContent = "Начать тест";
         return;
       }
 
@@ -176,13 +280,14 @@
       userAnswers = {};
 
       viewSetup.style.display = "none";
-      viewResults.style.display = "none";
       viewActive.style.display = "block";
+      viewResults.style.display = "none";
 
       startTimer();
-      renderActiveQuestion();
+      renderQuestion();
     } catch (e) {
-      alert("Ошибка при старте теста: " + e.message);
+      alert("Ошибка при запуске теста. Попробуйте снова.");
+      console.error(e);
     } finally {
       btn.disabled = false;
       btn.textContent = "Начать тест";
@@ -190,94 +295,104 @@
   }
 
   function startTimer() {
-    if (timerInterval) clearInterval(timerInterval);
+    clearInterval(timerInterval);
     quizStartTime = Date.now();
     const timerElem = document.getElementById("quiz-timer");
+    timerElem.textContent = "⏱️ 00:00";
 
     timerInterval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - quizStartTime) / 1000);
-      const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
-      const s = String(elapsed % 60).padStart(2, "0");
-      timerElem.textContent = `⏱️ ${m}:${s}`;
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      timerElem.textContent = `⏱️ ${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s}`;
     }, 1000);
   }
 
-  function stopTimer() {
-    if (timerInterval) clearInterval(timerInterval);
-  }
-
-  function renderActiveQuestion() {
+  function renderQuestion() {
     const q = activeQuestions[currentQIdx];
     const total = activeQuestions.length;
 
-    // Progress bar and counter
-    const pct = ((currentQIdx + 1) / total) * 100;
-    document.getElementById("quiz-progress-bar").style.width = `${pct}%`;
+    // Progress and counter
     document.getElementById("quiz-question-counter").textContent = `Вопрос ${currentQIdx + 1} из ${total}`;
+    document.getElementById("quiz-progress-bar").style.width = `${((currentQIdx + 1) / total) * 100}%`;
 
+    // Question text
     document.getElementById("quiz-question-text").textContent = q.text;
 
-    const optionsContainer = document.getElementById("quiz-options-container");
+    const optContainer = document.getElementById("quiz-options-container");
     const textContainer = document.getElementById("quiz-text-container");
     const feedbackBox = document.getElementById("quiz-feedback-box");
     const btnCheck = document.getElementById("btn-check-answer");
     const btnNext = document.getElementById("btn-next-question");
 
-    optionsContainer.innerHTML = "";
+    optContainer.innerHTML = "";
     feedbackBox.style.display = "none";
-    feedbackBox.className = "feedback-box";
+    feedbackBox.textContent = "";
 
-    // Setup input answer holder
-    if (!userAnswers[q.id]) {
-      userAnswers[q.id] = { selected_option_ids: [], text_answer: "" };
-    }
+    const ansData = userAnswers[q.id] || { selected_option_ids: [], text_answer: "" };
 
     if (q.has_options) {
-      optionsContainer.style.display = "block";
+      optContainer.style.display = "block";
       textContainer.style.display = "none";
+
+      const isMulti = q.options.filter((o) => o.is_correct).length > 1 || q.options.length > 4;
 
       q.options.forEach((opt) => {
         const item = document.createElement("div");
         item.className = "option-item";
         item.dataset.optionId = opt.id;
 
-        const isMulti = q.options.filter((o) => o.is_correct).length > 1;
-        const boxClass = isMulti ? "checkbox-box" : "radio-box";
-        item.innerHTML = `<span class="${boxClass}"></span><span>${escapeHtml(opt.option_text)}</span>`;
+        const isSelected = ansData.selected_option_ids.includes(opt.id);
+        if (isSelected) item.classList.add("selected");
 
-        if (userAnswers[q.id].selected_option_ids.includes(opt.id)) {
-          item.classList.add("selected");
-        }
+        const indicator = document.createElement("div");
+        indicator.className = isMulti ? "checkbox-box" : "radio-box";
+        indicator.textContent = isSelected ? (isMulti ? "✓" : "●") : "";
+
+        const textSpan = document.createElement("span");
+        textSpan.style.flex = "1";
+        textSpan.textContent = opt.option_text;
+
+        item.appendChild(indicator);
+        item.appendChild(textSpan);
 
         item.addEventListener("click", () => {
-          triggerHaptic("selection");
-          if (quizMode === "training" && feedbackBox.style.display === "block") {
-            return; // locked after check in training mode
-          }
+          if (btnNext.style.display === "block" && quizMode === "training") return; // locked after check
 
+          triggerHaptic("selection");
           if (isMulti) {
-            item.classList.toggle("selected");
-            const sel = userAnswers[q.id].selected_option_ids;
-            const idx = sel.indexOf(opt.id);
-            if (idx > -1) sel.splice(idx, 1);
-            else sel.push(opt.id);
+            if (ansData.selected_option_ids.includes(opt.id)) {
+              ansData.selected_option_ids = ansData.selected_option_ids.filter((i) => i !== opt.id);
+              item.classList.remove("selected");
+              indicator.textContent = "";
+            } else {
+              ansData.selected_option_ids.push(opt.id);
+              item.classList.add("selected");
+              indicator.textContent = "✓";
+            }
           } else {
-            optionsContainer.querySelectorAll(".option-item").forEach((el) => el.classList.remove("selected"));
+            optContainer.querySelectorAll(".option-item").forEach((el) => {
+              el.classList.remove("selected");
+              el.querySelector(".radio-box").textContent = "";
+            });
+            ansData.selected_option_ids = [opt.id];
             item.classList.add("selected");
-            userAnswers[q.id].selected_option_ids = [opt.id];
+            indicator.textContent = "●";
           }
+          userAnswers[q.id] = ansData;
         });
 
-        optionsContainer.appendChild(item);
+        optContainer.appendChild(item);
       });
     } else {
-      optionsContainer.style.display = "none";
+      optContainer.style.display = "none";
       textContainer.style.display = "block";
       const input = document.getElementById("quiz-text-input");
-      input.value = userAnswers[q.id].text_answer || "";
-      input.disabled = false;
-      input.oninput = (e) => {
-        userAnswers[q.id].text_answer = e.target.value;
+      input.value = ansData.text_answer || "";
+      input.disabled = btnNext.style.display === "block" && quizMode === "training";
+      input.oninput = () => {
+        ansData.text_answer = input.value;
+        userAnswers[q.id] = ansData;
       };
     }
 
@@ -287,22 +402,14 @@
     } else {
       btnCheck.style.display = "none";
       btnNext.style.display = "block";
-      btnNext.textContent = currentQIdx === total - 1 ? "Завершить тест" : "Следующий вопрос";
+      btnNext.textContent = currentQIdx === total - 1 ? "Завершить экзамен" : "Следующий вопрос";
     }
   }
 
   async function checkTrainingAnswer() {
+    triggerHaptic("medium");
     const q = activeQuestions[currentQIdx];
-    const answer = userAnswers[q.id];
-
-    if (q.has_options && (!answer.selected_option_ids || answer.selected_option_ids.length === 0)) {
-      alert("Пожалуйста, выберите вариант ответа.");
-      return;
-    }
-    if (!q.has_options && (!answer.text_answer || !answer.text_answer.trim())) {
-      alert("Пожалуйста, введите ответ.");
-      return;
-    }
+    const ansData = userAnswers[q.id] || { selected_option_ids: [], text_answer: "" };
 
     const btnCheck = document.getElementById("btn-check-answer");
     btnCheck.disabled = true;
@@ -312,47 +419,46 @@
         method: "POST",
         body: JSON.stringify({
           question_id: q.id,
-          selected_option_ids: answer.selected_option_ids,
-          text_answer: answer.text_answer,
+          selected_option_ids: ansData.selected_option_ids,
+          text_answer: ansData.text_answer,
         }),
       });
 
       const feedbackBox = document.getElementById("quiz-feedback-box");
-      const btnNext = document.getElementById("btn-next-question");
+      feedbackBox.style.display = "block";
 
       if (resp.is_correct) {
         triggerHaptic("success");
         feedbackBox.className = "feedback-box correct";
-        feedbackBox.textContent = "✅ Правильно! Отличный результат.";
+        feedbackBox.innerHTML = "<strong>Верно! Отличный результат.</strong>";
       } else {
         triggerHaptic("error");
         feedbackBox.className = "feedback-box incorrect";
-        const correctInfo = resp.correct_option_texts.length > 0
+        const correctStr = resp.correct_option_texts.length > 0
           ? resp.correct_option_texts.join(", ")
-          : resp.expected_answer_text;
-        feedbackBox.innerHTML = `❌ Неверно.<br><strong>Правильный ответ:</strong> ${escapeHtml(correctInfo)}`;
+          : (resp.expected_answer_text || "Не указан");
+        feedbackBox.innerHTML = `<strong>Неверно.</strong> Правильный ответ: <em>${escapeHtml(correctStr)}</em>`;
       }
 
-      // Highlight options if options exist
       if (q.has_options) {
-        document.querySelectorAll(".option-item").forEach((el) => {
-          const optId = parseInt(el.dataset.optionId);
+        const items = document.querySelectorAll("#quiz-options-container .option-item");
+        items.forEach((item) => {
+          const optId = parseInt(item.dataset.optionId);
           if (resp.correct_option_ids.includes(optId)) {
-            el.classList.add("correct");
-          } else if (answer.selected_option_ids.includes(optId)) {
-            el.classList.add("incorrect");
+            item.classList.add("correct");
+          } else if (ansData.selected_option_ids.includes(optId)) {
+            item.classList.add("incorrect");
           }
         });
-      } else {
-        document.getElementById("quiz-text-input").disabled = true;
       }
 
-      feedbackBox.style.display = "block";
       btnCheck.style.display = "none";
+      const btnNext = document.getElementById("btn-next-question");
       btnNext.style.display = "block";
-      btnNext.textContent = currentQIdx === activeQuestions.length - 1 ? "Завершить тест" : "Следующий вопрос";
+      btnNext.textContent = currentQIdx === activeQuestions.length - 1 ? "Посмотреть результаты" : "Следующий вопрос";
     } catch (e) {
-      alert("Ошибка при проверке ответа: " + e.message);
+      console.error(e);
+      alert("Не удалось проверить ответ.");
     } finally {
       btnCheck.disabled = false;
     }
@@ -362,73 +468,106 @@
     triggerHaptic("light");
     if (currentQIdx < activeQuestions.length - 1) {
       currentQIdx++;
-      renderActiveQuestion();
+      renderQuestion();
     } else {
       finishQuiz();
     }
   }
 
   async function finishQuiz() {
-    stopTimer();
-    triggerHaptic("medium");
+    clearInterval(timerInterval);
+    triggerHaptic("success");
 
-    const payload = {
-      test_attempt_id: activeAttemptId,
-      answers: activeQuestions.map((q) => ({
+    const answersPayload = activeQuestions.map((q) => {
+      const ans = userAnswers[q.id] || {};
+      return {
         question_id: q.id,
-        selected_option_ids: userAnswers[q.id]?.selected_option_ids || [],
-        text_answer: userAnswers[q.id]?.text_answer || "",
-      })),
-    };
+        selected_option_ids: ans.selected_option_ids || [],
+        text_answer: ans.text_answer || "",
+      };
+    });
 
     try {
-      const resp = await apiFetch("/api/quiz/finish", {
+      const result = await apiFetch("/api/quiz/finish", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          test_attempt_id: activeAttemptId,
+          answers: answersPayload,
+        }),
       });
 
-      renderResults(resp);
+      renderResults(result);
     } catch (e) {
-      alert("Ошибка при сохранении результатов: " + e.message);
+      console.error(e);
+      alert("Ошибка завершения теста.");
     }
   }
 
-  function renderResults(resp) {
+  function renderResults(result) {
     viewActive.style.display = "none";
     viewResults.style.display = "block";
 
     const scoreCircle = document.getElementById("result-score-circle");
-    scoreCircle.textContent = `${resp.percentage}%`;
-    scoreCircle.style.color = resp.percentage >= 70 ? "var(--success-color)" : (resp.percentage >= 40 ? "var(--warning-color)" : "var(--danger-color)");
+    scoreCircle.textContent = `${result.percentage}%`;
+    if (result.percentage >= 70) {
+      scoreCircle.style.color = "var(--success-color)";
+    } else if (result.percentage >= 40) {
+      scoreCircle.style.color = "var(--warning-color)";
+    } else {
+      scoreCircle.style.color = "var(--danger-color)";
+    }
 
-    document.getElementById("result-summary-text").textContent = `Правильных ответов: ${resp.score} из ${resp.total_questions}`;
+    const min = Math.floor(result.duration_seconds / 60);
+    const sec = result.duration_seconds % 60;
+    const durStr = `${min}:${sec < 10 ? "0" : ""}${sec}`;
 
-    const m = Math.floor(resp.duration_seconds / 60);
-    const s = resp.duration_seconds % 60;
-    document.getElementById("result-meta").textContent = `Время выполнения: ${m} мин ${s} сек`;
+    document.getElementById("result-summary-text").textContent =
+      `Правильных ответов: ${result.score} из ${result.total_questions}`;
+    document.getElementById("result-meta").textContent =
+      `Время прохождения: ${durStr} • Режим: ${quizMode === "training" ? "Тренировка" : "Экзамен"}`;
 
-    const container = document.getElementById("quiz-reviews-container");
-    container.innerHTML = "";
+    const reviewContainer = document.getElementById("quiz-reviews-container");
+    reviewContainer.innerHTML = "";
 
-    resp.reviews.forEach((rev, idx) => {
+    result.reviews.forEach((r, idx) => {
       const item = document.createElement("div");
       item.className = "accordion-item";
 
-      const icon = rev.is_correct ? "✅" : "❌";
-      const statusColor = rev.is_correct ? "var(--success-color)" : "var(--danger-color)";
+      const isOk = r.is_correct;
+      const statusIcon = isOk ? "✅" : "❌";
 
       item.innerHTML = `
-        <div class="accordion-header" style="color: ${statusColor};">
-          <span>${icon} Вопрос ${idx + 1}</span>
-          <span style="font-size: 13px; color: var(--hint-color);">${rev.is_correct ? "Верно" : "Ошибка"}</span>
+        <div class="accordion-header">
+          <span style="font-weight: 500; font-size: 14px; max-width: 85%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${statusIcon} ${idx + 1}. ${escapeHtml(r.text)}
+          </span>
+          <span style="font-size: 18px;">⌄</span>
         </div>
-        <div class="accordion-body">
-          <p style="font-weight: 600; margin-bottom: 8px;">${escapeHtml(rev.text)}</p>
-          <p style="font-size: 13px; margin-bottom: 4px;">Ваш ответ: <span style="color: ${statusColor};">${escapeHtml(rev.user_answer || "—")}</span></p>
-          ${!rev.is_correct ? `<p style="font-size: 13px; color: var(--success-color);">Правильный: <b>${escapeHtml(rev.correct_answer)}</b></p>` : ""}
+        <div class="accordion-body" style="display: none;">
+          <p style="font-weight: 600; margin-bottom: 8px;">${escapeHtml(r.text)}</p>
+          <div style="font-size: 13px; margin-bottom: 4px;">
+            <span style="color: var(--hint-color);">Ваш ответ:</span>
+            <strong style="color: ${isOk ? 'var(--success-color)' : 'var(--danger-color)'};">${escapeHtml(r.user_answer || "—")}</strong>
+          </div>
+          ${!isOk ? `
+            <div style="font-size: 13px;">
+              <span style="color: var(--hint-color);">Правильный ответ:</span>
+              <strong style="color: var(--success-color);">${escapeHtml(r.correct_answer)}</strong>
+            </div>
+          ` : ""}
         </div>
       `;
-      container.appendChild(item);
+
+      const header = item.querySelector(".accordion-header");
+      const body = item.querySelector(".accordion-body");
+      header.addEventListener("click", () => {
+        const isOpen = body.style.display === "block";
+        body.style.display = isOpen ? "none" : "block";
+        header.querySelector("span:last-child").textContent = isOpen ? "⌄" : "⌃";
+        triggerHaptic("selection");
+      });
+
+      reviewContainer.appendChild(item);
     });
   }
 
@@ -437,65 +576,64 @@
     const searchInput = document.getElementById("catalog-search-input");
     let debounceTimeout = null;
 
-    searchInput.addEventListener("input", (e) => {
+    searchInput.addEventListener("input", () => {
       clearTimeout(debounceTimeout);
       debounceTimeout = setTimeout(() => {
-        catalogQuery = e.target.value.trim();
+        catalogQuery = searchInput.value.trim();
+        catalogPage = 1;
         loadCatalog(true);
       }, 300);
     });
 
-    const filters = document.querySelectorAll(".catalog-filter");
-    filters.forEach((f) => {
-      f.addEventListener("click", () => {
-        filters.forEach((el) => el.classList.remove("active"));
-        f.classList.add("active");
-        catalogFilter = f.dataset.type;
+    const filterChips = document.querySelectorAll(".catalog-filter");
+    filterChips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        filterChips.forEach((c) => c.classList.remove("active"));
+        chip.classList.add("active");
+        catalogFilter = chip.dataset.type;
+        catalogPage = 1;
         triggerHaptic("selection");
         loadCatalog(true);
       });
     });
 
     document.getElementById("btn-load-more").addEventListener("click", () => {
-      if (catalogPage < catalogTotalPages) {
-        catalogPage++;
-        loadCatalog(false);
-      }
+      catalogPage++;
+      loadCatalog(false);
     });
   }
 
   async function loadCatalog(reset = false) {
+    const container = document.getElementById("catalog-list-container");
     if (reset) {
-      catalogPage = 1;
-      document.getElementById("catalog-list-container").innerHTML = "<p style='color: var(--hint-color); padding: 10px;'>Загрузка...</p>";
+      container.innerHTML = "<p style='color: var(--hint-color); text-align: center; padding: 20px;'>Загрузка вопросов...</p>";
     }
 
-    let url = `/api/questions?page=${catalogPage}&limit=15`;
-    if (catalogQuery) url += `&q=${encodeURIComponent(catalogQuery)}`;
-    if (catalogFilter === "options") url += "&has_options=true";
-    if (catalogFilter === "text") url += "&has_options=false";
-
     try {
-      const resp = await apiFetch(url);
-      catalogTotalPages = resp.total_pages;
+      let url = `/api/questions?page=${catalogPage}&per_page=15`;
+      if (catalogQuery) url += `&q=${encodeURIComponent(catalogQuery)}`;
+      if (catalogFilter === "options") url += `&has_options=true`;
+      if (catalogFilter === "text") url += `&has_options=false`;
 
-      document.getElementById("catalog-count-info").textContent = `Найдено вопросов: ${resp.total}`;
-      const container = document.getElementById("catalog-list-container");
+      const data = await apiFetch(url);
+      catalogTotalPages = data.total_pages;
+
+      document.getElementById("catalog-count-info").textContent = `Найдено вопросов: ${data.total}`;
 
       if (reset) container.innerHTML = "";
 
-      if (resp.items.length === 0 && reset) {
+      if (data.items.length === 0 && reset) {
         container.innerHTML = "<p style='color: var(--hint-color); text-align: center; padding: 20px;'>Вопросы не найдены.</p>";
         document.getElementById("btn-load-more").style.display = "none";
         return;
       }
 
-      resp.items.forEach((q) => {
+      data.items.forEach((q) => {
         const card = document.createElement("div");
         card.className = "accordion-item";
 
         let answersHtml = "";
-        if (q.has_options) {
+        if (q.has_options && q.options.length > 0) {
           answersHtml = q.options.map((opt, i) => `
             <div style="margin-bottom: 4px; ${opt.is_correct ? 'color: var(--success-color); font-weight: 600;' : 'color: var(--hint-color);'}">
               ${opt.is_correct ? '✅' : '•'} ${i + 1}. ${escapeHtml(opt.option_text)}
@@ -536,7 +674,7 @@
     }
   }
 
-  // ---------------- Profile Tab ----------------
+  // ---------------- Profile & History Details ----------------
   async function loadProfile() {
     try {
       const me = await apiFetch("/api/me");
@@ -554,29 +692,122 @@
 
       historyResp.items.forEach((item, idx) => {
         const card = document.createElement("div");
-        card.className = "card";
-        card.style.padding = "12px 16px";
-        card.style.marginBottom = "8px";
+        card.className = "history-item-card";
 
-        const dateStr = item.created_at ? new Date(item.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
-        const color = item.percentage >= 70 ? "var(--success-color)" : (item.percentage >= 40 ? "var(--warning-color)" : "var(--danger-color)");
+        const attemptNum = historyResp.total - idx;
+        const dateStr = item.created_at
+          ? new Date(item.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+          : "—";
+
+        const badgeClass = item.percentage >= 70 ? "high" : (item.percentage < 40 ? "low" : "");
 
         card.innerHTML = `
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; font-size: 15px;">Попытка #${historyResp.total - idx}</div>
-              <div style="font-size: 12px; color: var(--hint-color);">${dateStr}</div>
-            </div>
-            <div style="text-align: right;">
-              <div style="font-size: 18px; font-weight: 700; color: ${color};">${item.percentage}%</div>
-              <div style="font-size: 12px; color: var(--hint-color);">${item.score} из ${item.total_questions}</div>
-            </div>
+          <div class="history-card-left">
+            <div class="history-card-title">Попытка #${attemptNum}</div>
+            <div class="history-card-subtitle">${dateStr} • ${item.score} из ${item.total_questions} вопр.</div>
+          </div>
+          <div class="history-card-right">
+            <span class="history-score-badge ${badgeClass}">${item.percentage}%</span>
+            <svg class="history-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
           </div>
         `;
+
+        card.addEventListener("click", () => {
+          openAttemptDetails(item.id, attemptNum);
+        });
+
         listContainer.appendChild(card);
       });
     } catch (e) {
       console.error("Profile load error:", e);
+    }
+  }
+
+  function openAttemptDetails(attemptId, attemptNum) {
+    triggerHaptic("medium");
+    const modal = document.getElementById("history-modal");
+    const title = document.getElementById("modal-attempt-title");
+    const subtitle = document.getElementById("modal-attempt-subtitle");
+    const body = document.getElementById("modal-attempt-body");
+
+    title.textContent = `Разбор попытки #${attemptNum || attemptId}`;
+    subtitle.textContent = "Загрузка данных...";
+    body.innerHTML = "<p style='text-align: center; color: var(--hint-color); padding: 30px;'>Загрузка деталей...</p>";
+    modal.style.display = "flex";
+
+    apiFetch(`/api/history/${attemptId}`)
+      .then((data) => {
+        const dateStr = data.created_at
+          ? new Date(data.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+          : "—";
+        const min = Math.floor((data.duration_seconds || 0) / 60);
+        const sec = (data.duration_seconds || 0) % 60;
+        const durStr = `${min}:${sec < 10 ? '0' : ''}${sec}`;
+
+        subtitle.textContent = `${dateStr} • Результат: ${data.score}/${data.total_questions} (${data.percentage}%) • Время: ${durStr}`;
+
+        if (!data.answers || data.answers.length === 0) {
+          body.innerHTML = "<p style='text-align: center; color: var(--hint-color); padding: 20px;'>В этой попытке нет записанных ответов.</p>";
+          return;
+        }
+
+        body.innerHTML = data.answers.map((ans, idx) => {
+          const statusClass = ans.is_correct ? "correct" : "incorrect";
+          const statusLabel = ans.is_correct ? "Верно ✓" : "Ошибка ✗";
+
+          let optsHtml = "";
+          if (ans.has_options && ans.options && ans.options.length > 0) {
+            optsHtml = `<div class="modal-q-options">` +
+              ans.options.map((opt, oIdx) => `
+                <div class="modal-opt ${opt.is_correct ? 'is-correct' : ''}">
+                  ${opt.is_correct ? '✅ ' : '• '}${oIdx + 1}. ${escapeHtml(opt.option_text)}
+                </div>
+              `).join("") +
+              `</div>`;
+          } else {
+            optsHtml = `
+              <div style="margin-top: 8px; font-size: 13px;">
+                <span style="color: var(--hint-color);">Правильный ответ:</span>
+                <strong style="color: var(--success-color);">${escapeHtml(ans.correct_answer || "—")}</strong>
+              </div>
+            `;
+          }
+
+          return `
+            <div class="modal-q-item">
+              <div class="modal-q-header">
+                <span class="modal-q-text">${idx + 1}. ${escapeHtml(ans.text)}</span>
+                <span class="modal-status-badge ${statusClass}">${statusLabel}</span>
+              </div>
+              ${optsHtml}
+            </div>
+          `;
+        }).join("");
+      })
+      .catch((err) => {
+        console.error("Failed to load attempt details:", err);
+        body.innerHTML = "<p style='text-align: center; color: var(--danger-color); padding: 20px;'>Не удалось загрузить данные попытки.</p>";
+      });
+  }
+
+  function setupModalListeners() {
+    const modal = document.getElementById("history-modal");
+    const closeBtn = document.getElementById("modal-close-btn");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => {
+        triggerHaptic("light");
+        modal.style.display = "none";
+      });
+    }
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) {
+          triggerHaptic("light");
+          modal.style.display = "none";
+        }
+      });
     }
   }
 

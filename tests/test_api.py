@@ -136,9 +136,18 @@ async def test_api_quiz_flow(session_maker):
         assert finish_data["percentage"] == 100.0
         assert len(finish_data["reviews"]) == 2
 
-        # 5. Check history
+        # 5. Check history list and detail
         hist_resp = await client.get("/api/history")
         assert hist_resp.status_code == 200
         hist_data = hist_resp.json()
         assert len(hist_data["items"]) >= 1
         assert hist_data["items"][0]["score"] == 2
+
+        # 6. Check history detail
+        detail_resp = await client.get(f"/api/history/{attempt_id}")
+        assert detail_resp.status_code == 200
+        detail_data = detail_resp.json()
+        assert detail_data["id"] == attempt_id
+        assert detail_data["score"] == 2
+        assert len(detail_data["answers"]) == 2
+        assert detail_data["answers"][0]["is_correct"] is True

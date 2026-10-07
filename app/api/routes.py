@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -172,8 +172,11 @@ async def start_quiz(
     payload: QuizStartRequest,
     user: User = Depends(get_current_user),
 ):
-    count = max(1, min(payload.count, 100))
     async with async_session_maker() as session:
+        total_avail = (
+            await session.execute(select(func.count(Question.id)))
+        ).scalar() or 500
+        count = max(1, min(payload.count, total_avail))
         query = (
             select(Question)
             .options(selectinload(Question.options))
@@ -409,3 +412,85 @@ async def get_history(
             for a in attempts
         ],
     }
+
+
+@router.get("/history/{attempt_id}")
+async def get_history_detail(
+    attempt_id: int,
+    user: User = Depends(get_current_user),
+):
+    async with async_session_maker() as session:
+        query = (
+            select(TestAttempt)
+            .options(
+                selectinload(TestAttempt.answers)
+                .selectinload(AttemptAnswer.question)
+                .selectinload(Question.options)
+            )
+            .where(TestAttempt.id == attempt_id, TestAttempt.user_id == user.id)
+        )
+        res = await session.execute(query)
+        attempt = res.scalar_one_or_none()
+        if not attempt:
+            raise HTTPException(status_code=404, detail="Попытка не найдена")
+
+        duration_sec = 0
+        if attempt.start_time and attempt.end_time:
+            duration_sec = int((attempt.end_time - attempt.start_time).total_seconds())
+
+        answers_out = []
+        for ans in attempt.answers:
+            q = ans.question
+            if not q:
+                continue
+            correct_opts = (
+                [o.option_text for o in q.options if o.is_correct]
+                if q.has_options
+                else []
+            )
+            answers_out.append(
+                {
+                    "question_id": q.id,
+                    "text": q.text,
+                    "has_options": q.has_options,
+                    "is_correct": ans.is_correct,
+                    "options": [
+                        {
+                            "id": o.id,
+                            "option_text": o.option_text,
+                            "is_correct": o.is_correct,
+                        }
+                        for o in q.options
+                    ],
+                    "correct_answer": (
+                        ", ".join(correct_opts)
+                        if q.has_options
+                        else (q.answer_text or "")
+                    ),
+                }
+            )
+
+        total = attempt.total_questions or len(answers_out)
+        pct = (
+            round(((attempt.score or 0) / total * 100), 1)
+            if total > 0
+            else 0.0
+        )
+
+        return {
+            "id": attempt.id,
+            "created_at": (
+                attempt.created_at.isoformat() if attempt.created_at else None
+            ),
+            "start_time": (
+                attempt.start_time.isoformat() if attempt.start_time else None
+            ),
+            "end_time": (
+                attempt.end_time.isoformat() if attempt.end_time else None
+            ),
+            "duration_seconds": duration_sec,
+            "score": attempt.score or 0,
+            "total_questions": total,
+            "percentage": pct,
+            "answers": answers_out,
+        }
