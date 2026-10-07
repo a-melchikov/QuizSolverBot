@@ -151,3 +151,94 @@ async def test_api_quiz_flow(session_maker):
         assert detail_data["score"] == 2
         assert len(detail_data["answers"]) == 2
         assert detail_data["answers"][0]["is_correct"] is True
+
+
+@pytest.mark.asyncio
+async def test_api_categories_bookmarks_and_errors(session_maker):
+    app = create_app()
+    transport = ASGITransport(app=app)
+
+    async with session_maker() as session:
+        q1 = Question(
+            text="Пистолет Макарова вместимость магазина?",
+            has_options=True,
+            category="Пистолет Макарова (ПМ)",
+        )
+        q1.options.append(Option(option_text="8", is_correct=True))
+        q1.options.append(Option(option_text="10", is_correct=False))
+        session.add(q1)
+
+        q2 = Question(
+            text="Калибр АК-74?",
+            has_options=True,
+            category="Автомат Калашникова (АК)",
+        )
+        q2.options.append(Option(option_text="5,45 мм", is_correct=True))
+        session.add(q2)
+        await session.commit()
+        await session.refresh(q1, attribute_names=["options"])
+        await session.refresh(q2)
+        q1_id = q1.id
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Categories
+        cat_resp = await client.get("/api/categories")
+        assert cat_resp.status_code == 200
+        cats = cat_resp.json()
+        cat_names = [c["name"] for c in cats]
+        assert "Пистолет Макарова (ПМ)" in cat_names
+        assert "Автомат Калашникова (АК)" in cat_names
+
+        # 2. Bookmarks toggle
+        bm_toggle = await client.post(f"/api/bookmarks/toggle/{q1_id}")
+        assert bm_toggle.status_code == 200
+        assert bm_toggle.json()["is_bookmarked"] is True
+
+        bm_list = await client.get("/api/bookmarks")
+        assert bm_list.status_code == 200
+        assert q1_id in bm_list.json()["bookmarked_ids"]
+
+        # Filter by bookmark
+        q_bm = await client.get("/api/questions?only_bookmarks=true")
+        assert q_bm.status_code == 200
+        assert any(item["id"] == q1_id for item in q_bm.json()["items"])
+
+        # 3. Start quiz with category
+        cat_quiz = await client.post(
+            "/api/quiz/start",
+            json={"count": 5, "category": "Пистолет Макарова (ПМ)"},
+        )
+        assert cat_quiz.status_code == 200
+        assert len(cat_quiz.json()["questions"]) >= 1
+        assert cat_quiz.json()["questions"][0]["category"] == "Пистолет Макарова (ПМ)"
+
+        # 4. Start quiz in bookmarks mode
+        bm_quiz = await client.post(
+            "/api/quiz/start",
+            json={"count": 5, "mode": "bookmarks"},
+        )
+        assert bm_quiz.status_code == 200
+        assert len(bm_quiz.json()["questions"]) == 1
+        assert bm_quiz.json()["questions"][0]["id"] == q1_id
+
+        # 5. Finish a quiz with an incorrect answer to test errors mode
+        wrong_attempt_id = cat_quiz.json()["test_attempt_id"]
+        wrong_opt = [o.id for o in q1.options if not o.is_correct][0]
+        await client.post(
+            "/api/quiz/finish",
+            json={
+                "test_attempt_id": wrong_attempt_id,
+                "answers": [
+                    {"question_id": q1_id, "selected_option_ids": [wrong_opt]},
+                ],
+            },
+        )
+
+        # 6. Errors mode
+        err_quiz = await client.post(
+            "/api/quiz/start",
+            json={"count": 5, "mode": "errors"},
+        )
+        assert err_quiz.status_code == 200
+        assert len(err_quiz.json()["questions"]) >= 1
+        assert err_quiz.json()["questions"][0]["id"] == q1_id

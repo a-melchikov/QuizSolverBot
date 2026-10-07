@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.database import async_session_maker
 from app.handlers.buttons import ButtonCallbackData
-from app.models import AttemptAnswer, Option, Question, TestAttempt
+from app.models import AttemptAnswer, Bookmark, Option, Question, TestAttempt
 from app.repositories.users import UserRepository
 
 
@@ -141,25 +141,14 @@ async def process_questions_count(message: Message, state: FSMContext):
     await run_quiz_with_count(message, state, questions_count, message.from_user)
 
 
-async def run_quiz_with_count(message: Message, state: FSMContext, count: int, from_user):
-    user_repo = UserRepository()
-    user = await user_repo.get_or_create_user(
-        telegram_id=from_user.id,
-        username=from_user.username,
-        first_name=from_user.first_name,
-        last_name=from_user.last_name,
-    )
-
+async def run_quiz_with_questions(
+    message: Message,
+    state: FSMContext,
+    questions: list[Question],
+    user,
+    title: str = "Тест",
+):
     async with async_session_maker() as session:
-        query = select(Question).order_by(func.random()).limit(count)
-        result = await session.execute(query)
-        questions = list(result.scalars().all())
-
-        if not questions:
-            await message.answer("Не удалось загрузить вопросы из базы.")
-            await state.clear()
-            return
-
         test_attempt = TestAttempt(
             user_id=user.id,
             total_questions=len(questions),
@@ -175,13 +164,130 @@ async def run_quiz_with_count(message: Message, state: FSMContext, count: int, f
             start_time=datetime.now(),
         )
 
+    reply_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⏹ Завершить тест")]],
+        resize_keyboard=True,
+    )
     await message.answer(
-        f"🚀 <b>Тест начат!</b> Всего вопросов: <b>{len(questions)}</b>\n"
+        f"🚀 <b>{title} начат!</b> Всего вопросов: <b>{len(questions)}</b>\n\n"
         "Отвечайте на вопросы ниже:",
+        reply_markup=reply_kb,
         parse_mode="HTML",
     )
     await show_next_question(message, state)
     await state.set_state(TestStates.answering_questions)
+
+
+async def run_quiz_with_count(message: Message, state: FSMContext, count: int, from_user):
+    user_repo = UserRepository()
+    user = await user_repo.get_or_create_user(
+        telegram_id=from_user.id,
+        username=from_user.username,
+        first_name=from_user.first_name,
+        last_name=from_user.last_name,
+    )
+
+    async with async_session_maker() as session:
+        query = select(Question).order_by(func.random()).limit(count)
+        result = await session.execute(query)
+        questions = list(result.scalars().all())
+
+    if not questions:
+        await message.answer("Не удалось загрузить вопросы из базы.")
+        await state.clear()
+        return
+
+    await run_quiz_with_questions(message, state, questions, user, "Тест")
+
+
+async def start_errors_test(event: Message | CallbackQuery, state: FSMContext):
+    target_msg = event.message if isinstance(event, CallbackQuery) else event
+    user_repo = UserRepository()
+    user = await user_repo.get_or_create_user(
+        telegram_id=event.from_user.id,
+        username=event.from_user.username,
+        first_name=event.from_user.first_name,
+        last_name=event.from_user.last_name,
+    )
+
+    async with async_session_maker() as session:
+        err_subq = (
+            select(AttemptAnswer.question_id)
+            .join(TestAttempt, TestAttempt.id == AttemptAnswer.test_attempt_id)
+            .where(
+                TestAttempt.user_id == user.id,
+                AttemptAnswer.is_correct.is_(False),
+            )
+            .distinct()
+        )
+        query = (
+            select(Question)
+            .where(Question.id.in_(err_subq))
+            .order_by(func.random())
+            .limit(20)
+        )
+        res = await session.execute(query)
+        questions = list(res.scalars().all())
+
+    if not questions:
+        from app.handlers.buttons import get_help_keyboard
+
+        await target_msg.answer(
+            "🎉 <b>У вас нет зафиксированных ошибок!</b>\n\n"
+            "Вы отлично справляетесь. Пройдите общий тест или откройте приложение для закрепления.",
+            reply_markup=get_help_keyboard(),
+            parse_mode="HTML",
+        )
+        if isinstance(event, CallbackQuery):
+            await event.answer()
+        return
+
+    await run_quiz_with_questions(
+        target_msg, state, questions, user, "❌ Работа над ошибками"
+    )
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+
+
+async def start_bookmarks_test(event: Message | CallbackQuery, state: FSMContext):
+    target_msg = event.message if isinstance(event, CallbackQuery) else event
+    user_repo = UserRepository()
+    user = await user_repo.get_or_create_user(
+        telegram_id=event.from_user.id,
+        username=event.from_user.username,
+        first_name=event.from_user.first_name,
+        last_name=event.from_user.last_name,
+    )
+
+    async with async_session_maker() as session:
+        bm_subq = select(Bookmark.question_id).where(Bookmark.user_id == user.id)
+        query = (
+            select(Question)
+            .where(Question.id.in_(bm_subq))
+            .order_by(func.random())
+            .limit(20)
+        )
+        res = await session.execute(query)
+        questions = list(res.scalars().all())
+
+    if not questions:
+        from app.handlers.buttons import get_help_keyboard
+
+        await target_msg.answer(
+            "⭐️ <b>В избранном пока нет вопросов.</b>\n\n"
+            "Вы можете добавлять сложные вопросы в закладки в приложении, чтобы легко повторять их перед сдачей.",
+            reply_markup=get_help_keyboard(),
+            parse_mode="HTML",
+        )
+        if isinstance(event, CallbackQuery):
+            await event.answer()
+        return
+
+    await run_quiz_with_questions(
+        target_msg, state, questions, user, "⭐️ Тест по избранному"
+    )
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 async def show_next_question(message: Message, state: FSMContext):
@@ -433,6 +539,10 @@ async def finish_test(message: Message, state: FSMContext):
 def register_test_handlers(dp: Dispatcher):
     dp.message.register(start_test, Command("start_test"))
     dp.message.register(start_test, Command("test"))
+    dp.message.register(start_errors_test, Command("errors"))
+    dp.message.register(start_errors_test, Command("mistakes"))
+    dp.message.register(start_bookmarks_test, Command("bookmarks"))
+    dp.message.register(start_bookmarks_test, Command("favorites"))
     dp.callback_query.register(process_count_callback, TestCountCallback.filter())
     dp.message.register(process_questions_count, TestStates.waiting_for_questions_count)
     dp.message.register(process_text_answer, TestStates.answering_questions)

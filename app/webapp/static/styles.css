@@ -648,3 +648,199 @@ body.theme-dark .option-item.selected {
   color: var(--success-color);
   font-weight: 600;
 }
+
+/* ---------------- New Components: Categories, Bookmarks, Search ---------------- */
+.form-select {
+  width: 100%;
+  padding: 12px 14px;
+  background-color: var(--bg-color);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  color: var(--text-color);
+  font-size: 14px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg2+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 16px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.form-select:focus {
+  border-color: var(--button-color);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.category-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--button-color);
+  letter-spacing: 0.01em;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge-mini {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--card-border);
+  color: var(--text-color);
+  margin-left: 4px;
+}
+.option-item.selected .badge-mini {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+/* 4-item mode grid */
+.mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px 10px;
+  background: var(--bg-color);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.mode-card:hover {
+  border-color: var(--button-color);
+}
+.mode-card.selected {
+  background: var(--button-color);
+  border-color: var(--button-color);
+  color: #ffffff !important;
+}
+.mode-card.selected strong,
+.mode-card.selected div,
+.mode-card.selected span {
+  color: #ffffff !important;
+}
+.mode-card strong {
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.mode-card .mode-desc {
+  font-size: 11px;
+  color: var(--hint-color);
+  margin-top: 2px;
+}
+
+/* Bookmark Button */
+.btn-icon-bookmark {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--hint-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+.btn-icon-bookmark:active {
+  transform: scale(1.25);
+}
+.btn-icon-bookmark.bookmarked {
+  color: #eab308;
+}
+.btn-icon-bookmark svg {
+  width: 18px;
+  height: 18px;
+  transition: fill 0.2s ease, stroke 0.2s ease;
+}
+.btn-icon-bookmark.bookmarked svg {
+  fill: #eab308;
+  stroke: #eab308;
+}
+
+/* Search bar with icon and clear */
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.search-icon {
+  position: absolute;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  stroke: var(--hint-color);
+  pointer-events: none;
+}
+.search-input {
+  padding-left: 36px !important;
+  padding-right: 32px !important;
+}
+.search-clear-btn {
+  position: absolute;
+  right: 10px;
+  background: var(--card-border);
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  color: var(--hint-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Horizontal chips filter */
+.filter-chips-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.filter-chips-scroll::-webkit-scrollbar {
+  display: none;
+}
+.filter-chips-scroll .chip {
+  flex-shrink: 0;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+/* Profile Action Card */
+.profile-btn-action {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--button-color);
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-top: 6px;
+  text-decoration: underline;
+  padding: 0;
+}

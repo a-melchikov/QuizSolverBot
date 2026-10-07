@@ -6,13 +6,16 @@
     tg.expand();
   }
 
-  function triggerHaptic(type = "light") {
+  // ---------------- Tactile Haptic Feedback ----------------
+  function triggerHaptic(type = "light", style) {
     try {
       if (tg?.HapticFeedback) {
-        if (type === "success" || type === "error" || type === "warning") {
-          tg.HapticFeedback.notificationOccurred(type);
+        if (type === "notification") {
+          tg.HapticFeedback.notificationOccurred(style || "success");
+        } else if (type === "selection") {
+          tg.HapticFeedback.selectionChanged();
         } else {
-          tg.HapticFeedback.impactOccurred(type);
+          tg.HapticFeedback.impactOccurred(style || type || "light");
         }
       }
     } catch (_) {}
@@ -52,7 +55,7 @@
     const toggleBtn = document.getElementById("theme-toggle-btn");
     if (toggleBtn) {
       toggleBtn.addEventListener("click", () => {
-        triggerHaptic("light");
+        triggerHaptic("impact", "medium");
         const isDark = document.body.classList.contains("theme-dark");
         applyTheme(isDark ? "light" : "dark");
       });
@@ -93,9 +96,11 @@
   let currentTab = "quiz";
   let userProfile = null;
   let totalAvailableQuestions = 238;
+  const bookmarkedQuestionIds = new Set();
 
   // Quiz State
-  let quizMode = "training"; // "training" or "exam"
+  let quizMode = "training"; // "training", "exam", "errors", "bookmarks"
+  let quizCategory = "";
   let quizCount = 10;
   let activeAttemptId = null;
   let activeQuestions = [];
@@ -107,7 +112,8 @@
   // Catalog State
   let catalogPage = 1;
   let catalogQuery = "";
-  let catalogFilter = "all";
+  let catalogFilter = "all"; // "all", "bookmarks", "errors", "options", "text"
+  let catalogCategory = "";
   let catalogTotalPages = 1;
 
   // DOM Elements
@@ -128,18 +134,28 @@
     setupNavigation();
     setupQuizListeners();
     setupCatalogListeners();
+    setupProfileListeners();
     setupModalListeners();
     await loadInitialData();
+    await loadCategories();
   }
 
   async function loadInitialData() {
     try {
       userProfile = await apiFetch("/api/me");
       userBadge.textContent = userProfile.first_name || userProfile.username || "Пользователь";
+      updateProfileBadges();
     } catch (e) {
       console.warn("Could not load user info:", e);
       userBadge.textContent = "Гость";
     }
+
+    try {
+      const bmResp = await apiFetch("/api/bookmarks");
+      if (bmResp && bmResp.bookmarked_ids) {
+        bmResp.bookmarked_ids.forEach((id) => bookmarkedQuestionIds.add(id));
+      }
+    } catch (_) {}
 
     try {
       const qResp = await apiFetch("/api/questions?limit=1");
@@ -156,6 +172,85 @@
     } catch (_) {}
   }
 
+  function updateProfileBadges() {
+    if (!userProfile) return;
+    const errorsBadge = document.getElementById("badge-errors-count");
+    if (errorsBadge) errorsBadge.textContent = userProfile.errors_count || 0;
+
+    const bmBadge = document.getElementById("badge-bookmarks-count");
+    if (bmBadge) bmBadge.textContent = userProfile.bookmarks_count || bookmarkedQuestionIds.size || 0;
+
+    const statErrors = document.getElementById("stat-errors");
+    if (statErrors) statErrors.textContent = userProfile.errors_count || 0;
+
+    const statBm = document.getElementById("stat-bookmarks");
+    if (statBm) statBm.textContent = userProfile.bookmarks_count || bookmarkedQuestionIds.size || 0;
+  }
+
+  async function loadCategories() {
+    try {
+      const categories = await apiFetch("/api/categories");
+      const quizSelect = document.getElementById("quiz-category-select");
+      const catalogSelect = document.getElementById("catalog-category-select");
+
+      const optionsHtml = categories
+        .map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${c.count})</option>`)
+        .join("");
+
+      if (quizSelect) {
+        quizSelect.innerHTML = `<option value="">Все темы (общий тест)</option>${optionsHtml}`;
+        quizSelect.addEventListener("change", (e) => {
+          quizCategory = e.target.value;
+          triggerHaptic("selection");
+        });
+      }
+
+      if (catalogSelect) {
+        catalogSelect.innerHTML = `<option value="">Все темы</option>${optionsHtml}`;
+        catalogSelect.addEventListener("change", (e) => {
+          catalogCategory = e.target.value;
+          catalogPage = 1;
+          triggerHaptic("selection");
+          loadCatalog(true);
+        });
+      }
+    } catch (e) {
+      console.warn("Could not load categories:", e);
+    }
+  }
+
+  // ---------------- Bookmarks Toggle Helper ----------------
+  async function toggleBookmark(qId, btnElement) {
+    triggerHaptic("impact", "medium");
+    try {
+      const resp = await apiFetch(`/api/bookmarks/toggle/${qId}`, { method: "POST" });
+      const isBookmarked = resp.is_bookmarked;
+
+      if (isBookmarked) {
+        bookmarkedQuestionIds.add(qId);
+        if (btnElement) btnElement.classList.add("bookmarked");
+      } else {
+        bookmarkedQuestionIds.delete(qId);
+        if (btnElement) btnElement.classList.remove("bookmarked");
+      }
+
+      if (userProfile) {
+        userProfile.bookmarks_count = bookmarkedQuestionIds.size;
+        updateProfileBadges();
+      }
+
+      // Also sync active question if currently viewed
+      const currentActive = activeQuestions[currentQIdx];
+      if (currentActive && currentActive.id === qId) {
+        currentActive.is_bookmarked = isBookmarked;
+        const quizBmBtn = document.getElementById("quiz-btn-bookmark");
+        if (quizBmBtn) quizBmBtn.classList.toggle("bookmarked", isBookmarked);
+      }
+    } catch (err) {
+      console.error("Failed to toggle bookmark:", err);
+    }
+  }
+
   // ---------------- Navigation ----------------
   function setupNavigation() {
     navTabs.forEach((tab) => {
@@ -168,7 +263,7 @@
 
   function switchTab(tabName) {
     if (currentTab === tabName) return;
-    triggerHaptic("light");
+    triggerHaptic("selection");
     currentTab = tabName;
 
     navTabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === tabName));
@@ -220,21 +315,27 @@
       });
     }
 
-    // Mode selector
-    const modeTraining = document.getElementById("mode-training");
-    const modeExam = document.getElementById("mode-exam");
-    modeTraining.addEventListener("click", () => {
-      modeTraining.classList.add("selected");
-      modeExam.classList.remove("selected");
-      quizMode = "training";
-      triggerHaptic("selection");
+    // Mode selector (4 modes: training, exam, errors, bookmarks)
+    const modeCards = document.querySelectorAll(".mode-card");
+    modeCards.forEach((card) => {
+      card.addEventListener("click", () => {
+        modeCards.forEach((c) => c.classList.remove("selected"));
+        card.classList.add("selected");
+        quizMode = card.dataset.mode;
+        triggerHaptic("selection");
+      });
     });
-    modeExam.addEventListener("click", () => {
-      modeExam.classList.add("selected");
-      modeTraining.classList.remove("selected");
-      quizMode = "exam";
-      triggerHaptic("selection");
-    });
+
+    // Active Quiz Bookmark Button
+    const quizBmBtn = document.getElementById("quiz-btn-bookmark");
+    if (quizBmBtn) {
+      quizBmBtn.addEventListener("click", () => {
+        const q = activeQuestions[currentQIdx];
+        if (q) {
+          toggleBookmark(q.id, quizBmBtn);
+        }
+      });
+    }
 
     document.getElementById("btn-start-quiz").addEventListener("click", startQuiz);
     document.getElementById("btn-check-answer").addEventListener("click", checkTrainingAnswer);
@@ -251,7 +352,7 @@
   }
 
   async function startQuiz() {
-    triggerHaptic("medium");
+    triggerHaptic("impact", "medium");
     const btn = document.getElementById("btn-start-quiz");
     btn.disabled = true;
     btn.textContent = "Загрузка...";
@@ -262,11 +363,13 @@
         body: JSON.stringify({
           count: quizCount,
           mode: quizMode,
+          category: quizCategory || undefined,
         }),
       });
 
       if (!resp.questions || resp.questions.length === 0) {
-        alert("Нет доступных вопросов в базе!");
+        const message = resp.message || "Нет доступных вопросов по выбранным условиям!";
+        alert(message);
         btn.disabled = false;
         btn.textContent = "Начать тест";
         return;
@@ -313,6 +416,22 @@
     // Progress and counter
     document.getElementById("quiz-question-counter").textContent = `Вопрос ${currentQIdx + 1} из ${total}`;
     document.getElementById("quiz-progress-bar").style.width = `${((currentQIdx + 1) / total) * 100}%`;
+
+    // Category badge
+    const catBadge = document.getElementById("quiz-question-category");
+    if (q.category) {
+      catBadge.textContent = q.category;
+      catBadge.style.display = "inline-block";
+    } else {
+      catBadge.style.display = "none";
+    }
+
+    // Bookmark button
+    const quizBmBtn = document.getElementById("quiz-btn-bookmark");
+    if (quizBmBtn) {
+      const isBookmarked = q.is_bookmarked || bookmarkedQuestionIds.has(q.id);
+      quizBmBtn.classList.toggle("bookmarked", isBookmarked);
+    }
 
     // Question text
     document.getElementById("quiz-question-text").textContent = q.text;
@@ -394,7 +513,7 @@
       };
     }
 
-    if (quizMode === "training") {
+    if (quizMode === "training" || quizMode === "errors") {
       btnCheck.style.display = "block";
       btnNext.style.display = "none";
     } else {
@@ -405,7 +524,7 @@
   }
 
   async function checkTrainingAnswer() {
-    triggerHaptic("medium");
+    triggerHaptic("impact", "medium");
     const q = activeQuestions[currentQIdx];
     const ansData = userAnswers[q.id] || { selected_option_ids: [], text_answer: "" };
 
@@ -426,11 +545,11 @@
       feedbackBox.style.display = "block";
 
       if (resp.is_correct) {
-        triggerHaptic("success");
+        triggerHaptic("notification", "success");
         feedbackBox.className = "feedback-box correct";
         feedbackBox.innerHTML = "<strong>Верно! Отличный результат.</strong>";
       } else {
-        triggerHaptic("error");
+        triggerHaptic("notification", "error");
         feedbackBox.className = "feedback-box incorrect";
         const correctStr = resp.correct_option_texts.length > 0
           ? resp.correct_option_texts.join(", ")
@@ -463,7 +582,7 @@
   }
 
   function nextQuestion() {
-    triggerHaptic("light");
+    triggerHaptic("selection");
     if (currentQIdx < activeQuestions.length - 1) {
       currentQIdx++;
       renderQuestion();
@@ -474,7 +593,6 @@
 
   async function finishQuiz() {
     clearInterval(timerInterval);
-    triggerHaptic("success");
 
     const answersPayload = activeQuestions.map((q) => {
       const ans = userAnswers[q.id] || {};
@@ -494,7 +612,14 @@
         }),
       });
 
+      if (result.percentage >= 80) {
+        triggerHaptic("notification", "success");
+      } else {
+        triggerHaptic("notification", "warning");
+      }
+
       renderResults(result);
+      loadInitialData(); // refresh errors and bookmarks stats
     } catch (e) {
       console.error(e);
       alert("Ошибка завершения теста.");
@@ -522,7 +647,7 @@
     document.getElementById("result-summary-text").textContent =
       `Правильных ответов: ${result.score} из ${result.total_questions}`;
     document.getElementById("result-meta").textContent =
-      `Время прохождения: ${durStr} • Режим: ${quizMode === "training" ? "Тренировка" : "Экзамен"}`;
+      `Время: ${durStr} • Режим: ${getModeLabel(quizMode)}`;
 
     const reviewContainer = document.getElementById("quiz-reviews-container");
     reviewContainer.innerHTML = "";
@@ -533,15 +658,26 @@
 
       const isOk = r.is_correct;
       const statusIcon = isOk ? "✅" : "❌";
+      const isBookmarked = r.is_bookmarked || bookmarkedQuestionIds.has(r.question_id);
 
       item.innerHTML = `
         <div class="accordion-header">
-          <span style="font-weight: 500; font-size: 14px; max-width: 85%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-            ${statusIcon} ${idx + 1}. ${escapeHtml(r.text)}
-          </span>
-          <span style="font-size: 18px;">⌄</span>
+          <div style="display: flex; align-items: center; gap: 6px; max-width: 80%; overflow: hidden;">
+            <span style="font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              ${statusIcon} ${idx + 1}. ${escapeHtml(r.text)}
+            </span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button class="btn-icon-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-review-qid="${r.question_id}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+            </button>
+            <span style="font-size: 18px;">⌄</span>
+          </div>
         </div>
         <div class="accordion-body" style="display: none;">
+          ${r.category ? `<div style="margin-bottom: 6px;"><span class="category-badge">${escapeHtml(r.category)}</span></div>` : ""}
           <p style="font-weight: 600; margin-bottom: 8px;">${escapeHtml(r.text)}</p>
           <div style="font-size: 13px; margin-bottom: 4px;">
             <span style="color: var(--hint-color);">Ваш ответ:</span>
@@ -558,6 +694,13 @@
 
       const header = item.querySelector(".accordion-header");
       const body = item.querySelector(".accordion-body");
+      const bmBtn = item.querySelector(".btn-icon-bookmark");
+
+      bmBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleBookmark(r.question_id, bmBtn);
+      });
+
       header.addEventListener("click", () => {
         const isOpen = body.style.display === "block";
         body.style.display = isOpen ? "none" : "block";
@@ -569,18 +712,38 @@
     });
   }
 
+  function getModeLabel(mode) {
+    if (mode === "exam") return "Экзамен";
+    if (mode === "errors") return "Работа над ошибками";
+    if (mode === "bookmarks") return "По избранному";
+    return "Тренировка";
+  }
+
   // ---------------- Catalog Tab ----------------
   function setupCatalogListeners() {
     const searchInput = document.getElementById("catalog-search-input");
+    const clearBtn = document.getElementById("catalog-search-clear");
     let debounceTimeout = null;
 
     searchInput.addEventListener("input", () => {
       clearTimeout(debounceTimeout);
+      const val = searchInput.value.trim();
+      clearBtn.style.display = val ? "flex" : "none";
+
       debounceTimeout = setTimeout(() => {
-        catalogQuery = searchInput.value.trim();
+        catalogQuery = val;
         catalogPage = 1;
         loadCatalog(true);
-      }, 300);
+      }, 250);
+    });
+
+    clearBtn.addEventListener("click", () => {
+      triggerHaptic("impact", "light");
+      searchInput.value = "";
+      clearBtn.style.display = "none";
+      catalogQuery = "";
+      catalogPage = 1;
+      loadCatalog(true);
     });
 
     const filterChips = document.querySelectorAll(".catalog-filter");
@@ -588,7 +751,7 @@
       chip.addEventListener("click", () => {
         filterChips.forEach((c) => c.classList.remove("active"));
         chip.classList.add("active");
-        catalogFilter = chip.dataset.type;
+        catalogFilter = chip.dataset.filter;
         catalogPage = 1;
         triggerHaptic("selection");
         loadCatalog(true);
@@ -596,6 +759,7 @@
     });
 
     document.getElementById("btn-load-more").addEventListener("click", () => {
+      triggerHaptic("selection");
       catalogPage++;
       loadCatalog(false);
     });
@@ -608,12 +772,20 @@
     }
 
     try {
-      let url = `/api/questions?page=${catalogPage}&per_page=15`;
-      if (catalogQuery) url += `&q=${encodeURIComponent(catalogQuery)}`;
-      if (catalogFilter === "options") url += `&has_options=true`;
-      if (catalogFilter === "text") url += `&has_options=false`;
+      const params = new URLSearchParams({
+        page: catalogPage,
+        limit: 15,
+      });
 
-      const data = await apiFetch(url);
+      if (catalogQuery) params.set("q", catalogQuery);
+      if (catalogCategory) params.set("category", catalogCategory);
+
+      if (catalogFilter === "options") params.set("has_options", "true");
+      if (catalogFilter === "text") params.set("has_options", "false");
+      if (catalogFilter === "bookmarks") params.set("only_bookmarks", "true");
+      if (catalogFilter === "errors") params.set("only_errors", "true");
+
+      const data = await apiFetch(`/api/questions?${params.toString()}`);
       catalogTotalPages = data.total_pages;
 
       document.getElementById("catalog-count-info").textContent = `Найдено вопросов: ${data.total}`;
@@ -621,7 +793,7 @@
       if (reset) container.innerHTML = "";
 
       if (data.items.length === 0 && reset) {
-        container.innerHTML = "<p style='color: var(--hint-color); text-align: center; padding: 20px;'>Вопросы не найдены.</p>";
+        container.innerHTML = "<p style='color: var(--hint-color); text-align: center; padding: 20px;'>Вопросы по заданным фильтрам не найдены.</p>";
         document.getElementById("btn-load-more").style.display = "none";
         return;
       }
@@ -629,6 +801,8 @@
       data.items.forEach((q) => {
         const card = document.createElement("div");
         card.className = "accordion-item";
+
+        const isBookmarked = q.is_bookmarked || bookmarkedQuestionIds.has(q.id);
 
         let answersHtml = "";
         if (q.has_options && q.options.length > 0) {
@@ -643,10 +817,21 @@
 
         card.innerHTML = `
           <div class="accordion-header">
-            <span style="font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 85%;">
-              #${q.id} ${escapeHtml(q.text)}
-            </span>
-            <span style="font-size: 18px;">⌄</span>
+            <div style="display: flex; align-items: center; gap: 6px; max-width: 80%; overflow: hidden;">
+              <span style="font-size: 13px; font-weight: 700; color: var(--hint-color);">#${q.id}</span>
+              ${q.category ? `<span class="category-badge">${escapeHtml(q.category)}</span>` : ""}
+              <span style="font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                ${escapeHtml(q.text)}
+              </span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <button class="btn-icon-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-qid="${q.id}" aria-label="В избранное">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                </svg>
+              </button>
+              <span style="font-size: 18px;">⌄</span>
+            </div>
           </div>
           <div class="accordion-body" style="display: none;">
             <p style="font-weight: 600; margin-bottom: 10px;">${escapeHtml(q.text)}</p>
@@ -656,6 +841,13 @@
 
         const header = card.querySelector(".accordion-header");
         const body = card.querySelector(".accordion-body");
+        const bmBtn = card.querySelector(".btn-icon-bookmark");
+
+        bmBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleBookmark(q.id, bmBtn);
+        });
+
         header.addEventListener("click", () => {
           const isOpen = body.style.display === "block";
           body.style.display = isOpen ? "none" : "block";
@@ -673,11 +865,33 @@
   }
 
   // ---------------- Profile & History Details ----------------
+  function setupProfileListeners() {
+    const btnQuickBm = document.getElementById("btn-quick-bookmarks");
+    if (btnQuickBm) {
+      btnQuickBm.addEventListener("click", () => {
+        switchTab("quiz");
+        const bmCard = document.getElementById("mode-bookmarks");
+        if (bmCard) bmCard.click();
+      });
+    }
+
+    const btnQuickErr = document.getElementById("btn-quick-errors");
+    if (btnQuickErr) {
+      btnQuickErr.addEventListener("click", () => {
+        switchTab("quiz");
+        const errCard = document.getElementById("mode-errors");
+        if (errCard) errCard.click();
+      });
+    }
+  }
+
   async function loadProfile() {
     try {
       const me = await apiFetch("/api/me");
+      userProfile = me;
       document.getElementById("stat-completed").textContent = me.completed_attempts;
       document.getElementById("stat-avg").textContent = `${me.avg_percentage}%`;
+      updateProfileBadges();
 
       const historyResp = await apiFetch("/api/history?limit=15");
       const listContainer = document.getElementById("history-list-container");
@@ -724,7 +938,7 @@
   }
 
   function openAttemptDetails(attemptId, attemptNum) {
-    triggerHaptic("medium");
+    triggerHaptic("impact", "medium");
     const modal = document.getElementById("history-modal");
     const title = document.getElementById("modal-attempt-title");
     const subtitle = document.getElementById("modal-attempt-subtitle");
@@ -754,6 +968,7 @@
         body.innerHTML = data.answers.map((ans, idx) => {
           const statusClass = ans.is_correct ? "correct" : "incorrect";
           const statusLabel = ans.is_correct ? "Верно ✓" : "Ошибка ✗";
+          const isBookmarked = ans.is_bookmarked || bookmarkedQuestionIds.has(ans.question_id);
 
           let optsHtml = "";
           if (ans.has_options && ans.options && ans.options.length > 0) {
@@ -776,13 +991,31 @@
           return `
             <div class="modal-q-item">
               <div class="modal-q-header">
-                <span class="modal-q-text">${idx + 1}. ${escapeHtml(ans.text)}</span>
-                <span class="modal-status-badge ${statusClass}">${statusLabel}</span>
+                <div style="display: flex; align-items: center; gap: 6px; max-width: 80%;">
+                  <span class="modal-q-text">${idx + 1}. ${escapeHtml(ans.text)}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <button class="btn-icon-bookmark ${isBookmarked ? 'bookmarked' : ''}" data-hist-qid="${ans.question_id}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                    </svg>
+                  </button>
+                  <span class="modal-status-badge ${statusClass}">${statusLabel}</span>
+                </div>
               </div>
+              ${ans.category ? `<div style="margin-bottom: 6px;"><span class="category-badge">${escapeHtml(ans.category)}</span></div>` : ""}
               ${optsHtml}
             </div>
           `;
         }).join("");
+
+        // Attach listeners to bookmarks in modal
+        body.querySelectorAll(".btn-icon-bookmark").forEach((bmBtn) => {
+          bmBtn.addEventListener("click", () => {
+            const qId = parseInt(bmBtn.dataset.histQid);
+            if (qId) toggleBookmark(qId, bmBtn);
+          });
+        });
       })
       .catch((err) => {
         console.error("Failed to load attempt details:", err);
@@ -795,14 +1028,14 @@
     const closeBtn = document.getElementById("modal-close-btn");
     if (closeBtn) {
       closeBtn.addEventListener("click", () => {
-        triggerHaptic("light");
+        triggerHaptic("impact", "light");
         modal.style.display = "none";
       });
     }
     if (modal) {
       modal.addEventListener("click", (e) => {
         if (e.target === modal) {
-          triggerHaptic("light");
+          triggerHaptic("impact", "light");
           modal.style.display = "none";
         }
       });

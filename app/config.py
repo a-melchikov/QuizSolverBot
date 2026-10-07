@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     WEBAPP_HOST: str = "0.0.0.0"
     WEBAPP_PORT: int = 8000
     WEBAPP_URL: str = ""
+    WEBHOOK_URL: str = ""
+    WEBHOOK_PATH: str = "/webhook/telegram"
+    WEBHOOK_SECRET: str = ""
 
     @field_validator("ADMINS", mode="before")
     @classmethod

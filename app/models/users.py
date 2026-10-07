@@ -14,6 +14,9 @@ class User(Base):
     test_attempts = relationship(
         "TestAttempt", back_populates="user", cascade="all, delete-orphan"
     )
+    bookmarks = relationship(
+        "Bookmark", back_populates="user", cascade="all, delete-orphan"
+    )
 
     def __str__(self):
         return (

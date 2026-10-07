@@ -26,8 +26,18 @@ def get_start_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    text="🎯 Начать тест в чате",
+                    text="🎯 Начать тест",
                     callback_data=ButtonCallbackData(action="start_test").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="❌ Ошибки",
+                    callback_data=ButtonCallbackData(action="errors").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⭐️ Избранное",
+                    callback_data=ButtonCallbackData(action="bookmarks").pack(),
                 ),
                 InlineKeyboardButton(
                     text="🔍 Найти вопрос",

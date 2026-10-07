@@ -36,6 +36,16 @@ async def process_button_click(
 
             await start_test(callback_query.message, state)
 
+        elif callback_data.action == "errors":
+            from app.handlers.quiz_test import start_errors_test
+
+            await start_errors_test(callback_query, state)
+
+        elif callback_data.action == "bookmarks":
+            from app.handlers.quiz_test import start_bookmarks_test
+
+            await start_bookmarks_test(callback_query, state)
+
         elif callback_data.action == "history":
             from app.handlers.quiz_history import view_test_history
 
@@ -77,8 +87,18 @@ def get_help_keyboard() -> types.InlineKeyboardMarkup:
         [
             [
                 types.InlineKeyboardButton(
-                    text="🎯 Начать тест в чате",
+                    text="🎯 Начать тест",
                     callback_data=ButtonCallbackData(action="start_test").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="❌ Ошибки",
+                    callback_data=ButtonCallbackData(action="errors").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⭐️ Избранное",
+                    callback_data=ButtonCallbackData(action="bookmarks").pack(),
                 ),
                 InlineKeyboardButton(
                     text="🔍 Найти вопрос",

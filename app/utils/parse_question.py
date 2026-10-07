@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session_maker
 from app.logger_setup import get_logger
 from app.models import Option, Question
+from app.utils.categories import determine_category
 
 logger = get_logger(__name__)
 
@@ -47,12 +48,14 @@ async def save_questions_to_db(questions: list[dict], session: AsyncSession) -> 
     for question_data in questions:
         options = question_data.get("options", [])
         has_options = len(options) > 1
+        cat = determine_category(question_data["text"])
 
         if has_options:
             question = Question(
                 text=question_data["text"],
                 has_options=True,
                 answer_text=None,
+                category=cat,
             )
             for option_data in options:
                 option = Option(
@@ -66,6 +69,7 @@ async def save_questions_to_db(questions: list[dict], session: AsyncSession) -> 
                 text=question_data["text"],
                 has_options=False,
                 answer_text=single_answer,
+                category=cat,
             )
 
         session.add(question)

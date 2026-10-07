@@ -26,22 +26,6 @@ def run_migrations() -> None:
     logger.info("Database migrations applied successfully.")
 
 
-async def start_web_server() -> None:
-    app = create_app()
-    config = uvicorn.Config(
-        app=app,
-        host=settings.WEBAPP_HOST,
-        port=settings.WEBAPP_PORT,
-        log_level="warning",
-        access_log=False,
-    )
-    server = uvicorn.Server(config)
-    logger.info(
-        f"Starting WebApp server on http://{settings.WEBAPP_HOST}:{settings.WEBAPP_PORT}"
-    )
-    await server.serve()
-
-
 async def main() -> None:
     logger.info("Initializing the bot...")
     proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
@@ -52,11 +36,53 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     register_all_handlers(dp)
-    logger.info("Starting bot polling and WebApp server...")
-    await asyncio.gather(
-        start_web_server(),
-        dp.start_polling(bot),
+
+    app = create_app(bot=bot, dp=dp)
+    server_config = uvicorn.Config(
+        app=app,
+        host=settings.WEBAPP_HOST,
+        port=settings.WEBAPP_PORT,
+        log_level="warning",
+        access_log=False,
     )
+    server = uvicorn.Server(server_config)
+
+    webhook_url = settings.WEBHOOK_URL.strip().rstrip("/")
+    if webhook_url:
+        full_webhook_url = f"{webhook_url}{settings.WEBHOOK_PATH}"
+        logger.info(f"Setting up Telegram Webhook: {full_webhook_url}")
+        await bot.set_webhook(
+            url=full_webhook_url,
+            secret_token=settings.WEBHOOK_SECRET or None,
+            drop_pending_updates=True,
+            allowed_updates=dp.resolve_used_update_types(),
+        )
+        logger.info(
+            f"Webhook registered. Running WebApp and Webhook server on http://{settings.WEBAPP_HOST}:{settings.WEBAPP_PORT}..."
+        )
+        try:
+            await server.serve()
+        finally:
+            logger.info("Stopping bot... Deleting webhook.")
+            try:
+                await bot.delete_webhook()
+            except Exception as e:
+                logger.warning(f"Error deleting webhook on exit: {e}")
+            await bot.session.close()
+    else:
+        logger.info("WEBHOOK_URL is not set. Running in Long Polling mode...")
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+        except Exception as e:
+            logger.warning(f"Could not drop webhook before polling: {e}")
+
+        logger.info(
+            f"Starting bot polling and WebApp server on http://{settings.WEBAPP_HOST}:{settings.WEBAPP_PORT}..."
+        )
+        await asyncio.gather(
+            server.serve(),
+            dp.start_polling(bot),
+        )
 
 
 if __name__ == "__main__":

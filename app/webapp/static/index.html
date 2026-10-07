@@ -45,8 +45,15 @@
         <div class="card">
           <h2 style="font-size: 18px; margin-bottom: 8px;">Новое тестирование</h2>
           <p style="color: var(--hint-color); font-size: 14px; margin-bottom: 18px;">
-            Выберите параметры теста и приступайте к решению.
+            Выберите тему, режим и количество вопросов.
           </p>
+
+          <label class="field-label">ТЕМА ТЕСТИРОВАНИЯ</label>
+          <div style="margin-bottom: 16px;">
+            <select id="quiz-category-select" class="form-select">
+              <option value="">Все темы (общий тест)</option>
+            </select>
+          </div>
 
           <label class="field-label">КОЛИЧЕСТВО ВОПРОСОВ</label>
           <div class="chip-grid" id="count-selector">
@@ -67,18 +74,22 @@
           </div>
 
           <label class="field-label" style="margin-top: 18px;">РЕЖИМ ПРОХОЖДЕНИЯ</label>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px;">
-            <div id="mode-training" class="option-item selected" style="justify-content: center; text-align: center;">
-              <div>
-                <strong>Тренировка</strong>
-                <div style="font-size: 12px; color: var(--hint-color); margin-top: 2px;">Показ ошибок сразу</div>
-              </div>
+          <div class="mode-grid">
+            <div id="mode-training" class="mode-card selected" data-mode="training">
+              <strong>Тренировка</strong>
+              <div class="mode-desc">Ошибки сразу</div>
             </div>
-            <div id="mode-exam" class="option-item" style="justify-content: center; text-align: center;">
-              <div>
-                <strong>Экзамен</strong>
-                <div style="font-size: 12px; color: var(--hint-color); margin-top: 2px;">Разбор в конце</div>
-              </div>
+            <div id="mode-exam" class="mode-card" data-mode="exam">
+              <strong>Экзамен</strong>
+              <div class="mode-desc">Разбор в конце</div>
+            </div>
+            <div id="mode-errors" class="mode-card" data-mode="errors">
+              <strong>❌ Ошибки <span id="badge-errors-count" class="badge-mini">0</span></strong>
+              <div class="mode-desc">Работа над ошибками</div>
+            </div>
+            <div id="mode-bookmarks" class="mode-card" data-mode="bookmarks">
+              <strong>⭐️ Избранное <span id="badge-bookmarks-count" class="badge-mini">0</span></strong>
+              <div class="mode-desc">Сохраненные</div>
             </div>
           </div>
 
@@ -93,8 +104,18 @@
         </div>
 
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 14px; color: var(--hint-color);">
-          <span id="quiz-question-counter">Вопрос 1 из 10</span>
-          <span id="quiz-timer">⏱️ 00:00</span>
+          <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+            <span id="quiz-question-counter" style="flex-shrink: 0;">Вопрос 1 из 10</span>
+            <span id="quiz-question-category" class="category-badge" style="display: none;"></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+            <button id="quiz-btn-bookmark" class="btn-icon-bookmark" aria-label="В избранное" title="В избранное">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+            </button>
+            <span id="quiz-timer">⏱️ 00:00</span>
+          </div>
         </div>
 
         <div class="card">
@@ -139,11 +160,27 @@
     <!-- TAB 2: CATALOG -->
     <main id="tab-catalog" class="tab-content" style="display: none;">
       <div class="card" style="padding: 12px; margin-bottom: 12px;">
-        <input type="text" id="catalog-search-input" class="text-input" style="margin-bottom: 8px;" placeholder="Поиск по вопросам...">
-        <div style="display: flex; gap: 8px;">
-          <div class="chip active catalog-filter" data-type="all" style="flex: 1; padding: 6px;">Все</div>
-          <div class="chip catalog-filter" data-type="options" style="flex: 1; padding: 6px;">С вариантами</div>
-          <div class="chip catalog-filter" data-type="text" style="flex: 1; padding: 6px;">Текстовые</div>
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="catalog-search-input" class="text-input search-input" placeholder="Поиск по вопросу или ответу...">
+          <button id="catalog-search-clear" class="search-clear-btn" style="display: none;" title="Очистить">✕</button>
+        </div>
+
+        <div style="margin-bottom: 10px;">
+          <select id="catalog-category-select" class="form-select">
+            <option value="">Все темы</option>
+          </select>
+        </div>
+
+        <div class="filter-chips-scroll">
+          <div class="chip active catalog-filter" data-filter="all">Все</div>
+          <div class="chip catalog-filter" data-filter="bookmarks">⭐️ Избранное</div>
+          <div class="chip catalog-filter" data-filter="errors">❌ Ошибки</div>
+          <div class="chip catalog-filter" data-filter="options">С вариантами</div>
+          <div class="chip catalog-filter" data-filter="text">Текстовые</div>
         </div>
       </div>
 
@@ -164,6 +201,16 @@
           <div style="background: var(--bg-color); padding: 14px; border-radius: 12px; text-align: center; border: 1px solid var(--card-border);">
             <div id="stat-avg" style="font-size: 24px; font-weight: 700; color: var(--success-color);">0%</div>
             <div style="font-size: 12px; color: var(--hint-color); margin-top: 4px;">Средний балл</div>
+          </div>
+          <div style="background: var(--bg-color); padding: 14px; border-radius: 12px; text-align: center; border: 1px solid var(--card-border);">
+            <div id="stat-bookmarks" style="font-size: 24px; font-weight: 700; color: #eab308;">0</div>
+            <div style="font-size: 12px; color: var(--hint-color); margin-top: 4px;">В избранном</div>
+            <button id="btn-quick-bookmarks" class="profile-btn-action">Решить тест ⭐️</button>
+          </div>
+          <div style="background: var(--bg-color); padding: 14px; border-radius: 12px; text-align: center; border: 1px solid var(--card-border);">
+            <div id="stat-errors" style="font-size: 24px; font-weight: 700; color: var(--danger-color);">0</div>
+            <div style="font-size: 12px; color: var(--hint-color); margin-top: 4px;">Ошибок в базе</div>
+            <button id="btn-quick-errors" class="profile-btn-action">Исправить ❌</button>
           </div>
         </div>
       </div>

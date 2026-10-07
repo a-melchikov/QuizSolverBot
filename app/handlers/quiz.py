@@ -164,6 +164,8 @@ async def help_handler(message: types.Message) -> None:
         "⌨️ <b>Команды в чате:</b>\n"
         "• /start — Главное меню\n"
         "• /test (или /start_test) — Начать тестирование в чате\n"
+        "• /errors — Режим работы над ошибками\n"
+        "• /bookmarks — Тестирование по избранным вопросам\n"
         "• /question — Найти и решить вопрос по номеру\n"
         "• /solve_question <code>&lt;id&gt;</code> — Показать правильный ответ на вопрос\n"
         "• /list_questions — Каталог вопросов базы данных\n"
