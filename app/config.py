@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     SQLITE_DB_PATH: str = "data/database.db"
     ADMINS: list[int] = []
     LOG_FILE: str = "app.log"
+    WEBAPP_HOST: str = "0.0.0.0"
+    WEBAPP_PORT: int = 8000
+    WEBAPP_URL: str = ""
 
     @field_validator("ADMINS", mode="before")
     @classmethod

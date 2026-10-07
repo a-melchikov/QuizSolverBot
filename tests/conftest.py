@@ -31,12 +31,14 @@ async def session_maker(async_engine):
 
 @pytest_asyncio.fixture(autouse=True)
 def override_session_maker(session_maker, monkeypatch):
+    import app.api.routes
     import app.database
     import app.repositories.questions
     import app.repositories.users
     import app.utils.parse_question
 
     monkeypatch.setattr(app.database, "async_session_maker", session_maker)
+    monkeypatch.setattr(app.api.routes, "async_session_maker", session_maker)
     monkeypatch.setattr(
         app.repositories.questions, "async_session_maker", session_maker
     )

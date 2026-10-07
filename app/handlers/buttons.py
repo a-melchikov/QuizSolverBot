@@ -2,6 +2,8 @@ from aiogram import Dispatcher, types
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 
+from app.config import settings
+
 
 class ButtonCallbackData(CallbackData, prefix="menu"):
     action: str
@@ -48,8 +50,20 @@ async def process_button_click(
 
 
 def get_help_keyboard() -> types.InlineKeyboardMarkup:
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
+    keyboard = []
+
+    if settings.WEBAPP_URL:
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text="🚀 Открыть Quiz App",
+                    web_app=types.WebAppInfo(url=settings.WEBAPP_URL),
+                )
+            ]
+        )
+
+    keyboard.extend(
+        [
             [
                 types.InlineKeyboardButton(
                     text="Помощь",
@@ -82,6 +96,8 @@ def get_help_keyboard() -> types.InlineKeyboardMarkup:
             ],
         ]
     )
+
+    return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def register_button_handlers(dp: Dispatcher):
