@@ -1,11 +1,11 @@
-from sqlalchemy import String, Integer
-from sqlalchemy.orm import Mapped, relationship, mapped_column
+from sqlalchemy import BigInteger, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 
 class User(Base):
-    telegram_id: Mapped[int] = mapped_column(Integer, unique=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     username: Mapped[str | None] = mapped_column(String(50))
     first_name: Mapped[str | None] = mapped_column(String(50))
     last_name: Mapped[str | None] = mapped_column(String(50))

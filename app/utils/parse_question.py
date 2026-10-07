@@ -1,10 +1,17 @@
 import asyncio
+import sys
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import async_session_maker
-from app.models import Question, Option
+from app.logger_setup import get_logger
+from app.models import Option, Question
+
+logger = get_logger(__name__)
 
 
-async def parse_questions_from_file(file_path: str) -> list[dict]:
+def parse_questions_from_file(file_path: str | Path) -> list[dict]:
     with open(file_path, "r", encoding="utf-8") as file:
         lines = file.readlines()
 
@@ -35,39 +42,59 @@ async def parse_questions_from_file(file_path: str) -> list[dict]:
     return questions
 
 
-async def save_questions_to_db(questions: list[dict], session: AsyncSession):
+async def save_questions_to_db(questions: list[dict], session: AsyncSession) -> int:
+    count = 0
     for question_data in questions:
-        has_options = len(question_data["options"]) > 1
+        options = question_data.get("options", [])
+        has_options = len(options) > 1
 
-        question = Question(
-            text=question_data["text"],
-            has_options=has_options,
-            answer_text=None if has_options else question_data["text"],
-        )
-
-        if question_data["options"]:
-            for option_data in question_data["options"]:
+        if has_options:
+            question = Question(
+                text=question_data["text"],
+                has_options=True,
+                answer_text=None,
+            )
+            for option_data in options:
                 option = Option(
                     option_text=option_data["text"],
                     is_correct=option_data["is_correct"],
                 )
                 question.options.append(option)
+        else:
+            single_answer = options[0]["text"] if options else ""
+            question = Question(
+                text=question_data["text"],
+                has_options=False,
+                answer_text=single_answer,
+            )
 
         session.add(question)
+        count += 1
 
     await session.commit()
+    return count
 
 
-async def main():
-    file_path = "questions.txt"
+async def import_questions(file_path: str | Path = "questions.txt") -> int:
+    path = Path(file_path)
+    if not path.exists():
+        logger.error(f"Файл {path} не найден.")
+        return 0
 
-    questions = await parse_questions_from_file(file_path)
-    print(questions)
+    questions = parse_questions_from_file(path)
+    logger.info(f"Распарсено вопросов: {len(questions)}")
+
+    from app.database import Base, engine
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     async with async_session_maker() as session:
-        await save_questions_to_db(questions, session)
+        count = await save_questions_to_db(questions, session)
+        logger.info(f"Сохранено в базу данных: {count} вопросов")
+        return count
 
 
-# Запускаем главный асинхронный цикл
 if __name__ == "__main__":
-    asyncio.run(main())
+    target_file = sys.argv[1] if len(sys.argv) > 1 else "questions.txt"
+    asyncio.run(import_questions(target_file))

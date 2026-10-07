@@ -1,24 +1,42 @@
-[tool.poetry]
+[project]
 name = "quizsolverbot"
 version = "0.1.0"
-description = ""
-authors = ["Andrey Melchikov <andrei.melchikov25@gmail.com>"]
+description = "Telegram quiz bot with SQLite and SQLAlchemy"
 readme = "README.md"
+requires-python = ">=3.14"
+authors = [
+    {name = "Andrey Melchikov", email = "andrei.melchikov25@gmail.com"}
+]
+dependencies = [
+    "aiogram>=3.31.0",
+    "python-dotenv>=1.2.4",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "aiosqlite>=0.22.1",
+    "sqlalchemy[asyncio]>=2.0.38",
+    "alembic>=1.20.0",
+]
 
-[tool.poetry.dependencies]
-python = "^3.13"
-aiogram = "^3.17.0"
-python-dotenv = "^1.0.1"
-pydantic = "^2.10.6"
-pydantic-settings = "^2.7.1"
-aiosqlite = "^0.21.0"
-sqlalchemy = {extras = ["asyncio"], version = "^2.0.37"}
-alembic = "^1.14.1"
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.0",
+]
 
+[tool.ruff]
+target-version = "py314"
+line-length = 88
 
-[tool.poetry.group.dev.dependencies]
-black = "^25.1.0"
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff.lint.per-file-ignores]
+"alembic/*" = ["E402"]
+"alembic/versions/*" = ["I001"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

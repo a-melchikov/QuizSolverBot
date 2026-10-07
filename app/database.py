@@ -1,15 +1,15 @@
 from datetime import datetime
+
 from sqlalchemy import Integer, func
-from sqlalchemy.orm import DeclarativeBase, declared_attr, Mapped, mapped_column
 from sqlalchemy.ext.asyncio import (
     AsyncAttrs,
+    AsyncEngine,
     async_sessionmaker,
     create_async_engine,
-    AsyncEngine,
 )
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 from app.config import settings
-
 
 DATABASE_URL = settings.get_db_url()
 

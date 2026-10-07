@@ -1,14 +1,11 @@
+import os
 from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from app.logger_setup import get_logger
 
 BASE_DIR = Path(__file__).parent.parent
 ENV_FILE_PATH = BASE_DIR / ".env"
-logger = get_logger(__name__)
-
-logger.info(f"Base directory: {BASE_DIR}")
 
 
 class Settings(BaseSettings):
@@ -17,26 +14,35 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-    TOKEN: str
-    SQLITE_DB_PATH: str
-    ADMINS: list[int]
+    TOKEN: str = ""
+    SQLITE_DB_PATH: str = "data/database.db"
+    ADMINS: list[int] = []
+    LOG_FILE: str = "app.log"
 
     @field_validator("ADMINS", mode="before")
     @classmethod
     def split_admins(cls, value):
         if isinstance(value, str):
-            return [int(admin_id.strip()) for admin_id in value.split(",")]
+            value = value.strip()
+            if not value:
+                return []
+            return [
+                int(admin_id.strip())
+                for admin_id in value.split(",")
+                if admin_id.strip()
+            ]
         elif isinstance(value, int):
             return [value]
+        elif value is None:
+            return []
         return value
 
     def get_db_url(self) -> str:
-        return f"sqlite+aiosqlite:///{self.SQLITE_DB_PATH}"
+        db_path = Path(self.SQLITE_DB_PATH)
+        if not db_path.is_absolute():
+            db_path = BASE_DIR / db_path
+        os.makedirs(db_path.parent, exist_ok=True)
+        return f"sqlite+aiosqlite:///{db_path}"
 
 
 settings = Settings()
-
-if __name__ == "__main__":
-    print(ENV_FILE_PATH)
-    print(settings.model_dump())
-    print(settings.get_db_url())

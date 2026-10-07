@@ -1,6 +1,7 @@
-from aiogram import types, Dispatcher
-from app.logger_setup import get_logger
+from aiogram import Dispatcher, types
+
 from app.handlers.quiz import help_handler
+from app.logger_setup import get_logger
 
 logger = get_logger(__name__)
 

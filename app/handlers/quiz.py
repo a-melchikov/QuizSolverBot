@@ -1,16 +1,17 @@
 from html import escape as html_escape
-from aiogram import types, Dispatcher, html
+
+from aiogram import Dispatcher, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import async_session_maker
 from app.handlers.buttons import get_help_keyboard
-from app.models import Question
 from app.logger_setup import get_logger
+from app.models import Question
 from app.repositories.questions import QuestionRepository
 
 logger = get_logger(__name__)
@@ -19,26 +20,29 @@ logger = get_logger(__name__)
 async def list_questions_handler(message: types.Message, page: int = 0) -> None:
     QUESTIONS_PER_PAGE = 20
     question_repository = QuestionRepository()
-    questions = await question_repository.get_questions()
+    total_count = await question_repository.get_questions_count()
 
-    if not questions:
-        await message.answer("📚 *Нет доступных вопросов.*", parse_mode="Markdown")
+    if total_count == 0:
+        await message.answer("📚 <b>Нет доступных вопросов.</b>", parse_mode="HTML")
         return
 
-    total_pages = (len(questions) + QUESTIONS_PER_PAGE - 1) // QUESTIONS_PER_PAGE
+    total_pages = (total_count + QUESTIONS_PER_PAGE - 1) // QUESTIONS_PER_PAGE
 
     if page < 0 or page >= total_pages:
-        await message.answer("❌ *Некорректная страница.*", parse_mode="Markdown")
+        await message.answer("❌ <b>Некорректная страница.</b>", parse_mode="HTML")
         return
 
-    start = page * QUESTIONS_PER_PAGE
-    end = start + QUESTIONS_PER_PAGE
-    page_questions = questions[start:end]
+    offset = page * QUESTIONS_PER_PAGE
+    page_questions = await question_repository.get_questions_paginated(
+        limit=QUESTIONS_PER_PAGE, offset=offset
+    )
 
-    response_lines = ["📋 *Список вопросов*\n"]
+    response_lines = ["📋 <b>Список вопросов:</b>\n"]
     for q in page_questions:
         truncated_text = q.text if len(q.text) < 50 else q.text[:47] + "..."
-        response_lines.append(f"└ `{q.id:03d}` • _{html_escape(truncated_text)}_")
+        response_lines.append(
+            f"└ <code>{q.id:03d}</code> • <i>{html_escape(truncated_text)}</i>"
+        )
 
     footer = f"\n📌 Страница {page + 1} из {total_pages}"
     response = "\n".join(response_lines) + footer
@@ -56,21 +60,33 @@ async def list_questions_handler(message: types.Message, page: int = 0) -> None:
                 text="Вперед ▶️", callback_data=f"questions_page:{page + 1}"
             )
         )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[keyboard_buttons])
 
-    await message.answer(response, reply_markup=keyboard, parse_mode="Markdown")
+    keyboard = (
+        InlineKeyboardMarkup(inline_keyboard=[keyboard_buttons])
+        if keyboard_buttons
+        else None
+    )
+    await message.answer(response, reply_markup=keyboard, parse_mode="HTML")
 
 
 async def questions_pagination(callback_query: types.CallbackQuery):
-    page = int(callback_query.data.split(":")[1])
-
-    await callback_query.message.delete()
-    await list_questions_handler(callback_query.message, page)
+    try:
+        page = int(callback_query.data.split(":")[1])
+        await callback_query.message.delete()
+        await list_questions_handler(callback_query.message, page)
+    except Exception as e:
+        logger.error(f"Ошибка пагинации: {e}")
+    finally:
+        await callback_query.answer()
 
 
 async def delete_question_handler(
     message: types.Message, command: CommandObject
 ) -> None:
+    if settings.ADMINS and message.from_user.id not in settings.ADMINS:
+        await message.answer("❌ У вас нет прав для удаления вопросов.")
+        return
+
     if not command.args:
         await message.answer("Укажите id вопроса. Например: /delete_question 1")
         return
@@ -84,7 +100,7 @@ async def delete_question_handler(
     question_repository = QuestionRepository()
     try:
         if await question_repository.delete_question(question_id):
-            await message.answer(f"Вопрос с id {question_id} успешно удалён.")
+            await message.answer(f"✅ Вопрос с id {question_id} успешно удалён.")
         else:
             await message.answer(f"Вопрос с id {question_id} не найден.")
     except IntegrityError as e:
@@ -117,27 +133,30 @@ async def solve_question_handler(
             await message.answer(f"Вопрос с id {question_id} не найден.")
             return
 
-        response = f"Вопрос: {html_escape(question.text)}\n\n"
+        response = f"<b>Вопрос:</b> {html_escape(question.text)}\n\n"
 
         if question.has_options:
             options = question.options
             if options:
                 for idx, option in enumerate(options, start=1):
                     if option.is_correct:
-                        response += f"{idx}. <b>{html_escape(option.option_text)}</b>\n"
+                        response += (
+                            f"{idx}. <b>{html_escape(option.option_text)}</b> ✅\n"
+                        )
                     else:
                         response += f"{idx}. {html_escape(option.option_text)}\n"
             else:
                 response += "Варианты ответа не найдены."
         else:
-            response += f"Ответ: {html_escape(question.answer_text or 'Не указан')}"
+            response += (
+                f"<b>Ответ:</b> {html_escape(question.answer_text or 'Не указан')}"
+            )
 
         await message.answer(response, parse_mode="HTML")
 
 
 async def help_handler(message: types.Message) -> None:
     keyboard = get_help_keyboard()
-
     response = "Доступные команды:"
     await message.answer(response, reply_markup=keyboard)
 

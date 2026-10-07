@@ -1,18 +1,22 @@
 from datetime import datetime
-from aiogram import Dispatcher, Bot, F
-from aiogram.types import (
-    Message,
-    PollAnswer,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardRemove,
-)
+from html import escape as html_escape
+
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from sqlalchemy import select, func
+from aiogram.types import (
+    KeyboardButton,
+    Message,
+    PollAnswer,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
+from sqlalchemy import func, select
+
 from app.database import async_session_maker
-from app.models import Question, TestAttempt, AttemptAnswer, Option
+from app.models import AttemptAnswer, Option, Question, TestAttempt
+from app.repositories.users import UserRepository
 
 
 class TestStates(StatesGroup):
@@ -22,8 +26,12 @@ class TestStates(StatesGroup):
 
 async def start_test(message: Message, state: FSMContext):
     async with async_session_maker() as session:
-        total_questions = await session.execute(select(func.count(Question.id)))
-        total_questions = total_questions.scalar()
+        count_res = await session.execute(select(func.count(Question.id)))
+        total_questions = count_res.scalar() or 0
+
+    if total_questions == 0:
+        await message.answer("В базе данных пока нет вопросов.")
+        return
 
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="Завершить тест")]],
@@ -42,22 +50,40 @@ async def process_questions_count(message: Message, state: FSMContext):
         await finish_test(message, state)
         return
 
-    if not message.text.isdigit():
-        await message.answer("Пожалуйста, введите число!")
+    if not message.text or not message.text.isdigit():
+        await message.answer("Пожалуйста, введите положительное число:")
         return
 
     questions_count = int(message.text)
+    if questions_count <= 0:
+        await message.answer("Количество вопросов должно быть больше нуля:")
+        return
+
+    user_repo = UserRepository()
+    user = await user_repo.get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+    )
+
     async with async_session_maker() as session:
-        questions = await session.execute(
-            select(Question).order_by(func.random()).limit(questions_count)
-        )
-        questions = questions.scalars().all()
+        query = select(Question).order_by(func.random()).limit(questions_count)
+        result = await session.execute(query)
+        questions = list(result.scalars().all())
+
+        if not questions:
+            await message.answer("Не удалось получить вопросы.")
+            await state.clear()
+            return
 
         test_attempt = TestAttempt(
-            user_id=message.from_user.id, total_questions=len(questions)
+            user_id=user.id,
+            total_questions=len(questions),
         )
         session.add(test_attempt)
         await session.commit()
+        await session.refresh(test_attempt)
 
         await state.update_data(
             current_question=0,
@@ -72,8 +98,8 @@ async def process_questions_count(message: Message, state: FSMContext):
 
 async def show_next_question(message: Message, state: FSMContext):
     data = await state.get_data()
-    current_question = data["current_question"]
-    questions = data["questions"]
+    current_question = data.get("current_question", 0)
+    questions = data.get("questions", [])
 
     if current_question >= len(questions):
         await finish_test(message, state)
@@ -81,33 +107,35 @@ async def show_next_question(message: Message, state: FSMContext):
 
     async with async_session_maker() as session:
         question = await session.get(Question, questions[current_question])
+        if not question:
+            await state.update_data(current_question=current_question + 1)
+            await show_next_question(message, state)
+            return
 
         if question.has_options:
-            options = await session.execute(
+            options_res = await session.execute(
                 select(Option).where(Option.question_id == question.id)
             )
-            options = options.scalars().all()
+            options = list(options_res.scalars().all())
 
             if len(options) < 2:
                 await message.answer(
-                    f"Ошибка: Вопрос {current_question + 1} не имеет достаточного количества вариантов ответа."
+                    f"⚠️ Вопрос {current_question + 1} содержит менее 2 вариантов ответа, пропускаем."
                 )
-                data["current_question"] += 1
-                await state.update_data(data)
+                await state.update_data(current_question=current_question + 1)
                 await show_next_question(message, state)
                 return
 
-            # Обрезаем длинные варианты ответов
             option_texts = []
             for opt in options:
                 text = opt.option_text
-                if len(text) > 97:  # Оставляем место для "..."
-                    text = text[:97] + "..."
+                if len(text) > 97:
+                    text = text[:94] + "..."
                 option_texts.append(text)
 
             question_text = question.text
-            if len(question_text) > 300:
-                question_text = question_text[:297] + "..."
+            if len(question_text) > 290:
+                question_text = question_text[:287] + "..."
 
             poll = await message.answer_poll(
                 question=f"{current_question + 1}. {question_text}",
@@ -119,12 +147,10 @@ async def show_next_question(message: Message, state: FSMContext):
 
             await state.update_data(current_poll_id=poll.poll.id)
         else:
-            if len(question.text) > 300:
-                await message.answer(
-                    f"Ошибка: Вопрос {current_question + 1} превышает ограничение в 300 символов."
-                )
-            else:
-                await message.answer(f"{current_question + 1}. {question.text}")
+            await message.answer(
+                f"<b>Вопрос {current_question + 1}:</b>\n{html_escape(question.text)}",
+                parse_mode="HTML",
+            )
 
 
 async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: Bot):
@@ -134,22 +160,30 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
         return
 
     selected_options = poll_answer.option_ids
+    current_idx = data.get("current_question", 0)
+    questions = data.get("questions", [])
+    if current_idx >= len(questions):
+        return
+    question_id = questions[current_idx]
 
     async with async_session_maker() as session:
-        question_id = data["questions"][data["current_question"]]
-
-        options = await session.execute(
+        options_res = await session.execute(
             select(Option).where(Option.question_id == question_id)
         )
-        options = options.scalars().all()
+        options = list(options_res.scalars().all())
 
         option_mapping = {index: option.id for index, option in enumerate(options)}
-
         correct_options = [option for option in options if option.is_correct]
         correct_option_ids = [option.id for option in correct_options]
-        correct_option_texts = [option.option_text for option in correct_options]
+        correct_option_texts = [
+            html_escape(option.option_text) for option in correct_options
+        ]
 
-        selected_option_ids = [option_mapping[index] for index in selected_options]
+        selected_option_ids = [
+            option_mapping[index]
+            for index in selected_options
+            if index in option_mapping
+        ]
         is_correct = set(selected_option_ids) == set(correct_option_ids)
 
         answer = AttemptAnswer(
@@ -158,7 +192,6 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
             is_correct=is_correct,
         )
         session.add(answer)
-
         await session.commit()
 
     user_id = poll_answer.user.id
@@ -166,24 +199,21 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
     if is_correct:
         await bot.send_message(
             user_id,
-            f"✅ <b>Верно!</b>",
+            "✅ <b>Верно!</b>",
             parse_mode="HTML",
         )
     else:
         await bot.send_message(
             user_id,
             f"❌ <b>Неверно!</b>\n\n"
-            f"<b>Правильный ответ:</b>\n{'\n'.join(correct_option_texts)}",
+            f"<b>Правильный ответ:</b>\n{chr(10).join(correct_option_texts)}",
             parse_mode="HTML",
         )
 
-    data["current_question"] += 1
-    await state.update_data(data)
+    await state.update_data(current_question=current_idx + 1)
 
-    next_question_message = await bot.send_message(
-        user_id, "🔄 Переходим к следующему вопросу..."
-    )
-    await show_next_question(next_question_message, state)
+    next_msg = await bot.send_message(user_id, "🔄 Переходим к следующему вопросу...")
+    await show_next_question(next_msg, state)
 
 
 async def process_text_answer(message: Message, state: FSMContext):
@@ -192,15 +222,18 @@ async def process_text_answer(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    async with async_session_maker() as session:
-        question_id = data["questions"][data["current_question"]]
-        question = await session.get(Question, question_id)
-        result = await session.execute(
-            select(Option).where(Option.question_id == question.id)
-        )
+    current_idx = data.get("current_question", 0)
+    questions = data.get("questions", [])
+    if current_idx >= len(questions):
+        await finish_test(message, state)
+        return
+    question_id = questions[current_idx]
 
-        answer_ = result.scalar_one_or_none()
-        is_correct = message.text.lower() == answer_.option_text.lower()
+    async with async_session_maker() as session:
+        question = await session.get(Question, question_id)
+        expected_answer = (question.answer_text or "").strip() if question else ""
+        user_answer = (message.text or "").strip()
+        is_correct = user_answer.lower() == expected_answer.lower()
 
         answer = AttemptAnswer(
             test_attempt_id=data["test_attempt_id"],
@@ -215,12 +248,11 @@ async def process_text_answer(message: Message, state: FSMContext):
     else:
         await message.answer(
             f"❌ <b>Неверно!</b>\n\n"
-            f"<b>Правильный ответ:</b> {answer_.option_text}\n",
+            f"<b>Правильный ответ:</b> {html_escape(expected_answer)}\n",
             parse_mode="HTML",
         )
 
-    data["current_question"] += 1
-    await state.update_data(data)
+    await state.update_data(current_question=current_idx + 1)
     await show_next_question(message, state)
 
 
@@ -228,9 +260,9 @@ async def finish_test(message: Message, state: FSMContext):
     data = await state.get_data()
     end_time = datetime.now()
 
-    if "start_time" not in data:
+    if "start_time" not in data or "test_attempt_id" not in data:
         await message.answer(
-            "Тест завершен",
+            "Тест завершен.",
             reply_markup=ReplyKeyboardRemove(),
         )
         await state.clear()
@@ -240,32 +272,40 @@ async def finish_test(message: Message, state: FSMContext):
 
     async with async_session_maker() as session:
         test_attempt = await session.get(TestAttempt, data["test_attempt_id"])
-        answers = await session.execute(
-            select(AttemptAnswer).where(
-                AttemptAnswer.test_attempt_id == test_attempt.id
+        if test_attempt:
+            answers_res = await session.execute(
+                select(AttemptAnswer).where(
+                    AttemptAnswer.test_attempt_id == test_attempt.id
+                )
             )
-        )
-        answers = answers.scalars().all()
+            answers = list(answers_res.scalars().all())
 
-        correct_answers = sum(1 for answer in answers if answer.is_correct)
-        total_answers = len(answers)
+            correct_answers = sum(1 for a in answers if a.is_correct)
+            total_answers = len(answers)
 
-        test_attempt.end_time = end_time
-        test_attempt.score = correct_answers
-        await session.commit()
+            test_attempt.end_time = end_time
+            test_attempt.score = correct_answers
+            await session.commit()
+        else:
+            correct_answers = 0
+            total_answers = 0
 
-        percentage = (correct_answers / total_answers * 100) if total_answers > 0 else 0
+    percentage = (correct_answers / total_answers * 100) if total_answers > 0 else 0
+    duration_min = duration.seconds // 60
+    duration_sec = duration.seconds % 60
 
-        result_message = (
-            f"🏁 <b>Тест завершен!</b>\n\n"
-            f"⏳ <b>Время выполнения:</b> <i>{duration.seconds // 60} мин {duration.seconds % 60} сек</i>\n"
-            f"✅ <b>Правильных ответов:</b> <i>{correct_answers} из {total_answers}</i>\n"
-            f"📊 <b>Процент правильных ответов:</b> <i>{percentage:.1f}%</i>\n\n"
-            "Начать новый тест - /start_test."
-        )
+    result_message = (
+        f"🏁 <b>Тест завершен!</b>\n\n"
+        f"⏳ <b>Время выполнения:</b> <i>{duration_min} мин {duration_sec} сек</i>\n"
+        f"✅ <b>Правильных ответов:</b> <i>{correct_answers} из {total_answers}</i>\n"
+        f"📊 <b>Процент правильных ответов:</b> <i>{percentage:.1f}%</i>\n\n"
+        "Начать новый тест: /start_test"
+    )
 
-        await message.answer(result_message, reply_markup=ReplyKeyboardRemove())
-        await state.clear()
+    await message.answer(
+        result_message, reply_markup=ReplyKeyboardRemove(), parse_mode="HTML"
+    )
+    await state.clear()
 
 
 def register_test_handlers(dp: Dispatcher):

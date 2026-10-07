@@ -1,13 +1,14 @@
 from aiogram import Dispatcher
+
 from app.handlers import (
     add_question,
-    quiz_answers,
-    quiz_test,
-    quiz_history,
-    start,
+    buttons,
     fallback,
     quiz,
-    buttons,
+    quiz_answers,
+    quiz_history,
+    quiz_test,
+    start,
 )
 
 

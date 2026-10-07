@@ -1,0 +1,10 @@
+services:
+  quiz-bot:
+    build: .
+    container_name: quiz-solver-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./app.log:/app/app.log

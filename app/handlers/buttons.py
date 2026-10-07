@@ -1,4 +1,4 @@
-from aiogram import types, Dispatcher
+from aiogram import Dispatcher, types
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 

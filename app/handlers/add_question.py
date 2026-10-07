@@ -1,11 +1,12 @@
-from aiogram import types, Dispatcher
+from aiogram import Dispatcher, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from app.database import async_session_maker
-from app.models import Question, Option
+
+from app.config import settings
 from app.logger_setup import get_logger
 from app.repositories.questions import QuestionRepository
+from app.repositories.users import UserRepository
 from app.schemas.options import OptionCreate
 from app.schemas.questions import QuestionCreate
 
@@ -21,6 +22,10 @@ class AddQuestionStates(StatesGroup):
 
 
 async def add_question_start(message: types.Message, state: FSMContext) -> None:
+    if settings.ADMINS and message.from_user.id not in settings.ADMINS:
+        await message.answer("❌ У вас нет прав для добавления вопросов.")
+        return
+
     await state.clear()
     await message.answer("Введите текст вопроса:")
     await state.set_state(AddQuestionStates.waiting_for_question_text)
@@ -60,16 +65,25 @@ async def process_answer(message: types.Message, state: FSMContext) -> None:
         return
     await state.update_data(answer_text=answer_text)
     data = await state.get_data()
+
+    user_repo = UserRepository()
+    user = await user_repo.get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+    )
+
     question_repository = QuestionRepository()
     if not data.get("has_options"):
         question_schema = QuestionCreate(
             text=data["question_text"],
             has_options=False,
             answer_text=answer_text,
-            created_by=message.from_user.id,
+            created_by=user.id,
         )
         await question_repository.create_question(question_schema)
-        await message.answer("Вопрос успешно добавлен!")
+        await message.answer("✅ Вопрос успешно добавлен!")
         await state.clear()
     else:
         await message.answer("Введите варианты ответа, каждый вариант с новой строки:")
@@ -116,11 +130,19 @@ async def process_correct_options(message: types.Message, state: FSMContext) -> 
         )
         return
 
+    user_repo = UserRepository()
+    user = await user_repo.get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+    )
+
     question_schema = QuestionCreate(
         text=data["question_text"],
         has_options=True,
         answer_text=data.get("answer_text"),
-        created_by=message.from_user.id,
+        created_by=user.id,
     )
 
     option_schemes = [
@@ -133,8 +155,9 @@ async def process_correct_options(message: types.Message, state: FSMContext) -> 
         question_schema, option_schemes
     )
 
-    await message.answer("Вопрос успешно добавлен!")
+    await message.answer("✅ Вопрос успешно добавлен!")
     await state.clear()
+
 
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(add_question_start, Command(commands=["add_question"]))

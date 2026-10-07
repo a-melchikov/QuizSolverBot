@@ -9,6 +9,6 @@ class OptionBase(BaseModel):
 
 
 class OptionCreate(BaseModel):
-    question_id: int
+    question_id: int | None = None
     option_text: str
     is_correct: bool = False
