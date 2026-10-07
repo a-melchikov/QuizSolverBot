@@ -55,7 +55,7 @@ async def test_api_static_and_me(session_maker):
         # Check static index.html
         resp = await client.get("/")
         assert resp.status_code == 200
-        assert "Quiz Solver" in resp.text
+        assert "ОП тесты" in resp.text
 
         # Check /api/me
         resp = await client.get("/api/me")

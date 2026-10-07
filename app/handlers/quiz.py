@@ -157,8 +157,20 @@ async def solve_question_handler(
 
 async def help_handler(message: types.Message) -> None:
     keyboard = get_help_keyboard()
-    response = "Доступные команды:"
-    await message.answer(response, reply_markup=keyboard)
+    response = (
+        "📖 <b>Справочник по боту «ОП тесты»</b>\n\n"
+        "📱 <b>Приложение Web App (Рекомендуется):</b>\n"
+        "Нажмите кнопку <b>«🚀 Открыть ОП тесты»</b> или кнопку меню слева внизу — для быстрого прохождения с разбором ошибок и каталогом.\n\n"
+        "⌨️ <b>Команды в чате:</b>\n"
+        "• /start — Главное меню\n"
+        "• /test (или /start_test) — Начать тестирование в чате\n"
+        "• /question — Найти и решить вопрос по номеру\n"
+        "• /solve_question <code>&lt;id&gt;</code> — Показать правильный ответ на вопрос\n"
+        "• /list_questions — Каталог вопросов базы данных\n"
+        "• /history — История и процент ваших попыток\n"
+        "• /help — Это справочное сообщение"
+    )
+    await message.answer(response, reply_markup=keyboard, parse_mode="HTML")
 
 
 def register_quiz_handlers(dp: Dispatcher) -> None:

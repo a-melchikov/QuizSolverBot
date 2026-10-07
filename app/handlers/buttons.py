@@ -1,6 +1,7 @@
 from aiogram import Dispatcher, types
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardButton
 
 from app.config import settings
 
@@ -40,6 +41,16 @@ async def process_button_click(
 
             await view_test_history(callback_query.message)
 
+        elif callback_data.action == "main_menu":
+            from app.handlers.start import get_start_keyboard
+
+            await callback_query.message.answer(
+                "🏠 <b>Главное меню «ОП тесты»</b>\n\n"
+                "Выберите интересующий раздел:",
+                reply_markup=get_start_keyboard(),
+                parse_mode="HTML",
+            )
+
         else:
             await callback_query.message.answer("Неизвестное действие.")
 
@@ -56,7 +67,7 @@ def get_help_keyboard() -> types.InlineKeyboardMarkup:
         keyboard.append(
             [
                 types.InlineKeyboardButton(
-                    text="🚀 Открыть Quiz App",
+                    text="🚀 Открыть ОП тесты",
                     web_app=types.WebAppInfo(url=settings.WEBAPP_URL),
                 )
             ]
@@ -66,33 +77,29 @@ def get_help_keyboard() -> types.InlineKeyboardMarkup:
         [
             [
                 types.InlineKeyboardButton(
-                    text="Помощь",
-                    callback_data=ButtonCallbackData(action="help").pack(),
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="Список вопросов",
-                    callback_data=ButtonCallbackData(action="list_questions").pack(),
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="Решить один вопрос",
-                    callback_data=ButtonCallbackData(action="start_question").pack(),
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="Решить тест",
+                    text="🎯 Начать тест в чате",
                     callback_data=ButtonCallbackData(action="start_test").pack(),
-                )
+                ),
+                InlineKeyboardButton(
+                    text="🔍 Найти вопрос",
+                    callback_data=ButtonCallbackData(action="start_question").pack(),
+                ),
             ],
             [
                 types.InlineKeyboardButton(
-                    text="История",
+                    text="📚 Список вопросов",
+                    callback_data=ButtonCallbackData(action="list_questions").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="📊 Моя история",
                     callback_data=ButtonCallbackData(action="history").pack(),
-                )
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🏠 Главное меню",
+                    callback_data=ButtonCallbackData(action="main_menu").pack(),
+                ),
             ],
         ]
     )

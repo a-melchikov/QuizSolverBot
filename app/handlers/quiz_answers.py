@@ -4,10 +4,17 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, PollAnswer
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    PollAnswer,
+)
 from sqlalchemy import select
 
 from app.database import async_session_maker
+from app.handlers.buttons import ButtonCallbackData
 from app.models import Option, Question
 
 
@@ -16,14 +23,66 @@ class AnswerState(StatesGroup):
     answering = State()
 
 
-async def start_question(message: Message, state: FSMContext):
-    await message.answer("Введите ID вопроса, чтобы начать:")
+def get_after_question_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔍 Другой вопрос",
+                    callback_data=ButtonCallbackData(action="start_question").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="🎯 Начать тест",
+                    callback_data=ButtonCallbackData(action="start_test").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Главное меню",
+                    callback_data=ButtonCallbackData(action="main_menu").pack(),
+                )
+            ],
+        ]
+    )
+
+
+async def start_question(event: Message | CallbackQuery, state: FSMContext):
+    target_msg = event.message if isinstance(event, CallbackQuery) else event
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data=ButtonCallbackData(action="main_menu").pack(),
+                )
+            ]
+        ]
+    )
+    await target_msg.answer(
+        "🔍 <b>Решение отдельного вопроса</b>\n\n"
+        "Отправьте номер (ID) вопроса из базы:\n"
+        "<i>Например: <code>15</code></i>",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await state.set_state(AnswerState.waiting_for_question_id)
+    if isinstance(event, CallbackQuery):
+        await event.answer()
 
 
 async def process_question_id(message: Message, state: FSMContext):
+    if message.text in ["/cancel", "отмена", "Отмена"]:
+        await state.clear()
+        from app.handlers.start import get_start_keyboard
+
+        await message.answer(
+            "Действие отменено.", reply_markup=get_start_keyboard(), parse_mode="HTML"
+        )
+        return
+
     if not message.text or not message.text.isdigit():
-        await message.answer("Пожалуйста, введите корректный числовой ID:")
+        await message.answer("Пожалуйста, введите корректный числовой ID (например: <code>10</code>):", parse_mode="HTML")
         return
 
     question_id = int(message.text)
@@ -34,7 +93,11 @@ async def answer_question(message: Message, state: FSMContext, question_id: int)
     async with async_session_maker() as session:
         question = await session.get(Question, question_id)
         if not question:
-            await message.answer("Вопрос с указанным ID не найден.")
+            await message.answer(
+                f"❌ Вопрос с ID <code>{question_id}</code> не найден в базе.",
+                reply_markup=get_after_question_keyboard(),
+                parse_mode="HTML",
+            )
             await state.clear()
             return
 
@@ -46,9 +109,19 @@ async def answer_question(message: Message, state: FSMContext, question_id: int)
             )
             options = list(options_result.scalars().all())
 
-            option_texts = [opt.option_text for opt in options]
+            option_texts = []
+            for opt in options:
+                text = opt.option_text
+                if len(text) > 97:
+                    text = text[:94] + "..."
+                option_texts.append(text)
+
+            q_text = question.text
+            if len(q_text) > 280:
+                q_text = q_text[:277] + "..."
+
             poll = await message.answer_poll(
-                question=question.text,
+                question=f"[Вопрос #{question_id}]\n{q_text}",
                 options=option_texts,
                 type="regular",
                 allows_multiple_answers=True,
@@ -56,7 +129,11 @@ async def answer_question(message: Message, state: FSMContext, question_id: int)
             )
             await state.update_data(current_poll_id=poll.poll.id)
         else:
-            await message.answer(question.text)
+            await message.answer(
+                f"📝 <b>Вопрос #{question_id}:</b>\n\n{html_escape(question.text)}\n\n"
+                "<i>Отправьте ваш ответ текстом в чат:</i>",
+                parse_mode="HTML",
+            )
 
         await state.set_state(AnswerState.answering)
 
@@ -90,14 +167,19 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
         is_correct = set(selected_option_ids) == set(correct_option_ids)
 
         correct_text = "\n".join(
-            html_escape(opt.option_text) for opt in correct_options
+            f"• {html_escape(opt.option_text)}" for opt in correct_options
         )
         result_message = (
-            "✅ <b>Верно!</b>"
+            "✅ <b>Верно! Отличный ответ.</b>"
             if is_correct
-            else f"❌ <b>Неверно!</b>\n\n<b>Правильный ответ:</b>\n{correct_text}"
+            else f"❌ <b>Неверно.</b>\n\n<b>Правильный вариант:</b>\n{correct_text}"
         )
-        await bot.send_message(poll_answer.user.id, result_message, parse_mode="HTML")
+        await bot.send_message(
+            poll_answer.user.id,
+            result_message,
+            reply_markup=get_after_question_keyboard(),
+            parse_mode="HTML",
+        )
         await state.clear()
 
 
@@ -120,16 +202,21 @@ async def process_text_answer(message: Message, state: FSMContext):
         is_correct = user_answer.lower() == expected_answer.lower()
 
         result_message = (
-            "✅ <b>Верно!</b>"
+            "✅ <b>Верно! Точный ответ.</b>"
             if is_correct
-            else f"❌ <b>Неверно!</b>\n\n<b>Правильный ответ:</b> {html_escape(expected_answer)}"
+            else f"❌ <b>Неверно.</b>\n\n<b>Правильный ответ:</b> <code>{html_escape(expected_answer)}</code>"
         )
-        await message.answer(result_message, parse_mode="HTML")
+        await message.answer(
+            result_message,
+            reply_markup=get_after_question_keyboard(),
+            parse_mode="HTML",
+        )
         await state.clear()
 
 
 def register_answer_handlers(dp: Dispatcher):
     dp.message.register(start_question, Command("start_question"))
+    dp.message.register(start_question, Command("question"))
     dp.message.register(process_question_id, AnswerState.waiting_for_question_id)
     dp.message.register(process_text_answer, AnswerState.answering)
     dp.poll_answer.register(process_poll_answer, AnswerState.answering)

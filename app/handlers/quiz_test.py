@@ -3,18 +3,25 @@ from html import escape as html_escape
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
+from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     Message,
     PollAnswer,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    WebAppInfo,
 )
 from sqlalchemy import func, select
 
+from app.config import settings
 from app.database import async_session_maker
+from app.handlers.buttons import ButtonCallbackData
 from app.models import AttemptAnswer, Option, Question, TestAttempt
 from app.repositories.users import UserRepository
 
@@ -24,34 +31,106 @@ class TestStates(StatesGroup):
     answering_questions = State()
 
 
-async def start_test(message: Message, state: FSMContext):
+class TestCountCallback(CallbackData, prefix="tcount"):
+    count: int
+
+
+def get_test_count_keyboard(total_questions: int) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text="5 вопросов", callback_data=TestCountCallback(count=5).pack()
+            ),
+            InlineKeyboardButton(
+                text="10 вопросов", callback_data=TestCountCallback(count=10).pack()
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="20 вопросов", callback_data=TestCountCallback(count=20).pack()
+            ),
+            InlineKeyboardButton(
+                text="50 вопросов", callback_data=TestCountCallback(count=50).pack()
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"📚 Все вопросы ({total_questions})",
+                callback_data=TestCountCallback(count=total_questions).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=ButtonCallbackData(action="main_menu").pack(),
+            ),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def start_test(event: Message | CallbackQuery, state: FSMContext):
+    target_msg = event.message if isinstance(event, CallbackQuery) else event
+
     async with async_session_maker() as session:
         count_res = await session.execute(select(func.count(Question.id)))
         total_questions = count_res.scalar() or 0
 
     if total_questions == 0:
-        await message.answer("В базе данных пока нет вопросов.")
+        await target_msg.answer("⚠️ В базе данных пока нет вопросов.")
         return
 
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Завершить тест")]],
+    text = (
+        "🎯 <b>Настройка тестирования в чате</b>\n\n"
+        "Выберите готовое количество вопросов или введите своё число (от 1 до "
+        f"{total_questions}) в ответ на это сообщение:"
+    )
+
+    reply_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⏹ Завершить тест")]],
         resize_keyboard=True,
-        one_time_keyboard=False,
     )
-    await message.answer(
-        f"Сколько вопросов вы хотите решить? (от 1 до {total_questions})",
-        reply_markup=kb,
+
+    await target_msg.answer(
+        text,
+        reply_markup=get_test_count_keyboard(total_questions),
+        parse_mode="HTML",
     )
+    # Also provide persistent keyboard for convenience
+    await target_msg.answer(
+        "💡 <i>Вы можете в любой момент нажать «⏹ Завершить тест» для досрочного выхода.</i>",
+        reply_markup=reply_kb,
+        parse_mode="HTML",
+    )
+
     await state.set_state(TestStates.waiting_for_questions_count)
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+
+
+async def process_count_callback(
+    callback_query: CallbackQuery,
+    callback_data: TestCountCallback,
+    state: FSMContext,
+):
+    await callback_query.answer()
+    await run_quiz_with_count(
+        callback_query.message,
+        state,
+        callback_data.count,
+        callback_query.from_user,
+    )
 
 
 async def process_questions_count(message: Message, state: FSMContext):
-    if message.text == "Завершить тест":
+    if message.text in ["Завершить тест", "⏹ Завершить тест", "/cancel", "отмена"]:
         await finish_test(message, state)
         return
 
     if not message.text or not message.text.isdigit():
-        await message.answer("Пожалуйста, введите положительное число:")
+        await message.answer(
+            "Пожалуйста, выберите количество кнопкой выше или введите число:"
+        )
         return
 
     questions_count = int(message.text)
@@ -59,21 +138,25 @@ async def process_questions_count(message: Message, state: FSMContext):
         await message.answer("Количество вопросов должно быть больше нуля:")
         return
 
+    await run_quiz_with_count(message, state, questions_count, message.from_user)
+
+
+async def run_quiz_with_count(message: Message, state: FSMContext, count: int, from_user):
     user_repo = UserRepository()
     user = await user_repo.get_or_create_user(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name,
+        telegram_id=from_user.id,
+        username=from_user.username,
+        first_name=from_user.first_name,
+        last_name=from_user.last_name,
     )
 
     async with async_session_maker() as session:
-        query = select(Question).order_by(func.random()).limit(questions_count)
+        query = select(Question).order_by(func.random()).limit(count)
         result = await session.execute(query)
         questions = list(result.scalars().all())
 
         if not questions:
-            await message.answer("Не удалось получить вопросы.")
+            await message.answer("Не удалось загрузить вопросы из базы.")
             await state.clear()
             return
 
@@ -92,6 +175,11 @@ async def process_questions_count(message: Message, state: FSMContext):
             start_time=datetime.now(),
         )
 
+    await message.answer(
+        f"🚀 <b>Тест начат!</b> Всего вопросов: <b>{len(questions)}</b>\n"
+        "Отвечайте на вопросы ниже:",
+        parse_mode="HTML",
+    )
     await show_next_question(message, state)
     await state.set_state(TestStates.answering_questions)
 
@@ -112,6 +200,9 @@ async def show_next_question(message: Message, state: FSMContext):
             await show_next_question(message, state)
             return
 
+        total_q = len(questions)
+        q_header = f"Вопрос {current_question + 1} из {total_q}"
+
         if question.has_options:
             options_res = await session.execute(
                 select(Option).where(Option.question_id == question.id)
@@ -119,9 +210,6 @@ async def show_next_question(message: Message, state: FSMContext):
             options = list(options_res.scalars().all())
 
             if len(options) < 2:
-                await message.answer(
-                    f"⚠️ Вопрос {current_question + 1} содержит менее 2 вариантов ответа, пропускаем."
-                )
                 await state.update_data(current_question=current_question + 1)
                 await show_next_question(message, state)
                 return
@@ -134,11 +222,11 @@ async def show_next_question(message: Message, state: FSMContext):
                 option_texts.append(text)
 
             question_text = question.text
-            if len(question_text) > 290:
-                question_text = question_text[:287] + "..."
+            if len(question_text) > 280:
+                question_text = question_text[:277] + "..."
 
             poll = await message.answer_poll(
-                question=f"{current_question + 1}. {question_text}",
+                question=f"[{q_header}]\n{question_text}",
                 options=option_texts,
                 type="regular",
                 allows_multiple_answers=True,
@@ -148,23 +236,25 @@ async def show_next_question(message: Message, state: FSMContext):
             await state.update_data(current_poll_id=poll.poll.id)
         else:
             await message.answer(
-                f"<b>Вопрос {current_question + 1}:</b>\n{html_escape(question.text)}",
+                f"📝 <b>[{q_header}]</b>\n\n"
+                f"{html_escape(question.text)}\n\n"
+                "<i>Отправьте ваш ответ сообщением в чат:</i>",
                 parse_mode="HTML",
             )
 
 
 async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: Bot):
     data = await state.get_data()
-
     if poll_answer.poll_id != data.get("current_poll_id"):
         return
 
-    selected_options = poll_answer.option_ids
     current_idx = data.get("current_question", 0)
     questions = data.get("questions", [])
     if current_idx >= len(questions):
         return
+
     question_id = questions[current_idx]
+    user_id = poll_answer.user.id
 
     async with async_session_maker() as session:
         options_res = await session.execute(
@@ -172,19 +262,11 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
         )
         options = list(options_res.scalars().all())
 
-        option_mapping = {index: option.id for index, option in enumerate(options)}
-        correct_options = [option for option in options if option.is_correct]
-        correct_option_ids = [option.id for option in correct_options]
-        correct_option_texts = [
-            html_escape(option.option_text) for option in correct_options
+        correct_option_indices = [
+            i for i, opt in enumerate(options) if opt.is_correct
         ]
-
-        selected_option_ids = [
-            option_mapping[index]
-            for index in selected_options
-            if index in option_mapping
-        ]
-        is_correct = set(selected_option_ids) == set(correct_option_ids)
+        user_selected = poll_answer.option_ids
+        is_correct = set(user_selected) == set(correct_option_indices)
 
         answer = AttemptAnswer(
             test_attempt_id=data["test_attempt_id"],
@@ -194,30 +276,27 @@ async def process_poll_answer(poll_answer: PollAnswer, state: FSMContext, bot: B
         session.add(answer)
         await session.commit()
 
-    user_id = poll_answer.user.id
+        correct_option_texts = [
+            f"• {opt.option_text}" for opt in options if opt.is_correct
+        ]
 
     if is_correct:
-        await bot.send_message(
-            user_id,
-            "✅ <b>Верно!</b>",
-            parse_mode="HTML",
-        )
+        await bot.send_message(user_id, "✅ <b>Верно!</b>", parse_mode="HTML")
     else:
         await bot.send_message(
             user_id,
-            f"❌ <b>Неверно!</b>\n\n"
-            f"<b>Правильный ответ:</b>\n{chr(10).join(correct_option_texts)}",
+            f"❌ <b>Неверно.</b>\n\n<b>Правильный вариант:</b>\n"
+            f"{chr(10).join(correct_option_texts)}",
             parse_mode="HTML",
         )
 
     await state.update_data(current_question=current_idx + 1)
-
-    next_msg = await bot.send_message(user_id, "🔄 Переходим к следующему вопросу...")
+    next_msg = await bot.send_message(user_id, "⏳ Следующий вопрос...")
     await show_next_question(next_msg, state)
 
 
 async def process_text_answer(message: Message, state: FSMContext):
-    if message.text == "Завершить тест":
+    if message.text in ["Завершить тест", "⏹ Завершить тест", "/cancel", "отмена"]:
         await finish_test(message, state)
         return
 
@@ -227,13 +306,14 @@ async def process_text_answer(message: Message, state: FSMContext):
     if current_idx >= len(questions):
         await finish_test(message, state)
         return
+
     question_id = questions[current_idx]
 
     async with async_session_maker() as session:
         question = await session.get(Question, question_id)
-        expected_answer = (question.answer_text or "").strip() if question else ""
-        user_answer = (message.text or "").strip()
-        is_correct = user_answer.lower() == expected_answer.lower()
+        expected = (question.answer_text or "").strip() if question else ""
+        user_val = (message.text or "").strip()
+        is_correct = user_val.lower() == expected.lower()
 
         answer = AttemptAnswer(
             test_attempt_id=data["test_attempt_id"],
@@ -247,8 +327,7 @@ async def process_text_answer(message: Message, state: FSMContext):
         await message.answer("✅ <b>Верно!</b>", parse_mode="HTML")
     else:
         await message.answer(
-            f"❌ <b>Неверно!</b>\n\n"
-            f"<b>Правильный ответ:</b> {html_escape(expected_answer)}\n",
+            f"❌ <b>Неверно.</b>\n\n<b>Правильный ответ:</b> <code>{html_escape(expected)}</code>\n",
             parse_mode="HTML",
         )
 
@@ -279,7 +358,6 @@ async def finish_test(message: Message, state: FSMContext):
                 )
             )
             answers = list(answers_res.scalars().all())
-
             correct_answers = sum(1 for a in answers if a.is_correct)
             total_answers = len(answers)
 
@@ -294,22 +372,68 @@ async def finish_test(message: Message, state: FSMContext):
     duration_min = duration.seconds // 60
     duration_sec = duration.seconds % 60
 
+    if percentage >= 80:
+        praise = "🌟 <b>Отличный результат! Высокий уровень подготовки!</b>"
+    elif percentage >= 50:
+        praise = "👍 <b>Хороший результат, но есть над чем поработать.</b>"
+    else:
+        praise = "📚 <b>Рекомендуется повторить материал и пройти тренировку снова.</b>"
+
     result_message = (
-        f"🏁 <b>Тест завершен!</b>\n\n"
-        f"⏳ <b>Время выполнения:</b> <i>{duration_min} мин {duration_sec} сек</i>\n"
-        f"✅ <b>Правильных ответов:</b> <i>{correct_answers} из {total_answers}</i>\n"
-        f"📊 <b>Процент правильных ответов:</b> <i>{percentage:.1f}%</i>\n\n"
-        "Начать новый тест: /start_test"
+        f"🏁 <b>Тестирование завершено!</b>\n\n"
+        f"• Правильно: <b>{correct_answers} из {total_answers}</b>\n"
+        f"• Результат: <b>{percentage:.1f}%</b>\n"
+        f"• Время: <b>{duration_min} мин {duration_sec} сек</b>\n\n"
+        f"{praise}"
+    )
+
+    buttons = []
+    if settings.WEBAPP_URL:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text="🚀 Открыть ОП тесты (Разбор)",
+                    web_app=WebAppInfo(url=settings.WEBAPP_URL),
+                )
+            ]
+        )
+    buttons.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="🔄 Пройти ещё раз",
+                    callback_data=ButtonCallbackData(action="start_test").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="📊 Моя история",
+                    callback_data=ButtonCallbackData(action="history").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 В главное меню",
+                    callback_data=ButtonCallbackData(action="main_menu").pack(),
+                )
+            ],
+        ]
     )
 
     await message.answer(
-        result_message, reply_markup=ReplyKeyboardRemove(), parse_mode="HTML"
+        result_message,
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML",
+    )
+    await message.answer(
+        "Выберите следующее действие:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await state.clear()
 
 
 def register_test_handlers(dp: Dispatcher):
     dp.message.register(start_test, Command("start_test"))
+    dp.message.register(start_test, Command("test"))
+    dp.callback_query.register(process_count_callback, TestCountCallback.filter())
     dp.message.register(process_questions_count, TestStates.waiting_for_questions_count)
     dp.message.register(process_text_answer, TestStates.answering_questions)
     dp.poll_answer.register(process_poll_answer, TestStates.answering_questions)

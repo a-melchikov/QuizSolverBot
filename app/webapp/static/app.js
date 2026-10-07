@@ -146,9 +146,7 @@
       if (qResp && qResp.total) {
         totalAvailableQuestions = qResp.total;
         const allChip = document.getElementById("chip-all-count");
-        if (allChip) allChip.textContent = `Все (${totalAvailableQuestions})`;
-        const hint = document.getElementById("custom-count-hint");
-        if (hint) hint.textContent = `Доступно вопросов в базе: ${totalAvailableQuestions}`;
+        if (allChip) allChip.textContent = "Все";
         const input = document.getElementById("custom-count-input");
         if (input) {
           input.max = totalAvailableQuestions;
