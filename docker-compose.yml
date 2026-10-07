@@ -4,9 +4,11 @@ services:
     container_name: quiz-solver-bot
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: /home/andrey/.config/docker/telegram-bot-proxy.env
+        required: false
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./app.log:/app/app.log

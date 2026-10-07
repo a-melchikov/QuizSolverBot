@@ -1,9 +1,11 @@
 import asyncio
+import os
 import sys
 
 import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from alembic.config import Config
 
@@ -42,8 +44,11 @@ async def start_web_server() -> None:
 
 async def main() -> None:
     logger.info("Initializing the bot...")
+    proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+    session = AiohttpSession(proxy=proxy) if proxy else None
     bot = Bot(
         token=settings.TOKEN,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     register_all_handlers(dp)
